@@ -316,6 +316,7 @@
                     </div>
                 </div>
 
+                <div id="model-workspace-root">
                 <div class="model-controls">
                     <button id="auto-scale-btn" class="auto-scale-btn" title="描画範囲をモデル図の大きさに合わせて自動スケーリング (ショートカット: A)">🔍 自動スケーリング</button>
                     <button id="reset-model-btn" class="reset-btn" title="モデル情報を全て消去します">🔄 モデルリセット</button>
@@ -372,6 +373,7 @@
                         <input type="range" id="font-scale-model" min="0.5" max="3.0" step="0.1" value="1.0" style="width: 80px; vertical-align: middle;">
                         <span id="font-scale-value-model" style="font-size: 12px; width: 40px; display: inline-block; text-align: left;">1.0x</span>
                         <button id="fit-view-model" title="全体表示" style="margin-left:6px;">⛶ 全体</button>
+                        <button id="fullscreen-model-btn" title="モデル図を全画面表示 (Escで終了)" style="margin-left:6px;">全画面</button>
                         <input type="checkbox" id="grid-toggle" checked>
                         <label for="grid-toggle" title="グリッド表示切替 (ショートカット: G)">グリッド表示</label>
                         <input type="checkbox" id="member-info-toggle" title="マウスオーバー時の部材情報表示切替">
@@ -426,7 +428,7 @@
                         <div id="ai-status-indicator" style="display: none; font-size: 14px; color: #005A9C;"></div>
                     </div>
                 </div>
-                <div class="canvas-container" style="position: relative;">
+                <div class="canvas-container" id="model-canvas-container" style="position: relative;">
                     <canvas id="model-canvas"></canvas>
                     <div id="model-3d-container" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></div>
                     <div id="member-tooltip" class="member-tooltip hidden">
@@ -450,6 +452,8 @@
                         <button id="load-btn" title="入力データを読込 (ショートカット: Ctrl+O)">入力読込</button>
                         <button id="create-share-link-btn" title="モデル共有用のリンクを作成">共有リンク作成</button>
                     </div>
+                </div>
+
                 </div>
 
                 <h2>2. 荷重条件</h2>
@@ -972,6 +976,7 @@
     <script src="model_viewer_3d.js"></script>
     <script src="steel_data.js"></script>
     <script src="frame_analyzer.js"></script>
+    <script src="model_fullscreen.js"></script>
     <script src="communication.js"></script>
 </body>
 </html>

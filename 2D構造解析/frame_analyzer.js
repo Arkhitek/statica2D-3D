@@ -6608,7 +6608,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const padding = 70;
         const isRatioCanvas = canvas.id === 'ratio-canvas';
         const minHeight = isRatioCanvas ? 350 : 250;
-        const maxHeight = isRatioCanvas ? 1200 : 800;
+        const containerRect = canvas.parentElement.getBoundingClientRect();
+        const fullscreenAvailableHeight = Math.round(containerRect.height || 0);
+        const isFullscreenModelCanvas = isModelCanvas && document.body.classList.contains('model-fullscreen-active') && fullscreenAvailableHeight > 0;
+        const maxHeight = isRatioCanvas ? 1200 : (isFullscreenModelCanvas ? fullscreenAvailableHeight : 800);
         
         // キャンバスの高さを先に決定する
         let requiredHeight;
@@ -6618,7 +6621,6 @@ document.addEventListener('DOMContentLoaded', () => {
             requiredHeight = isRatioCanvas ? 500 : 400;
         } else {
             // まず仮のコンテナサイズでスケールを計算
-            const containerRect = canvas.parentElement.getBoundingClientRect();
             const tempScaleX = (containerRect.width - 2 * padding) / (modelWidth || 1);
             const tempScaleY = (containerRect.height - 2 * padding) / (modelHeight || 1);
             const tempScale = Math.min(tempScaleX, tempScaleY) * 0.9;
@@ -6630,7 +6632,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // キャンバスの高さを変更した後に、新しいサイズを取得してスケールを再計算
         const rect = canvas.getBoundingClientRect();
-        const containerRect = canvas.parentElement.getBoundingClientRect();
+        const containerRectAfterResize = canvas.parentElement.getBoundingClientRect();
         
         let scale, offsetX, offsetY;
         
@@ -16566,7 +16568,13 @@ const loadPreset = (index) => {
     };
 
     // リサイズ検出機能（ResizeObserverを使用）
-    const modelCanvasContainer = document.querySelector('.input-section .canvas-container');
+    const getModelCanvasContainer = () => {
+        return document.getElementById('model-canvas-container')
+            || document.querySelector('.input-section .canvas-container')
+            || document.querySelector('.canvas-container');
+    };
+
+    const modelCanvasContainer = getModelCanvasContainer();
     console.log('modelCanvasContainer element:', modelCanvasContainer);
     
     if (modelCanvasContainer) {
@@ -16635,7 +16643,7 @@ const loadPreset = (index) => {
     let fallbackLastSize = { width: 0, height: 0 };
     
     const fallbackResizeCheck = () => {
-        const container = document.querySelector('.input-section .canvas-container');
+        const container = getModelCanvasContainer();
         if (container) {
             const rect = container.getBoundingClientRect();
             const currentSize = { width: Math.round(rect.width), height: Math.round(rect.height) };
@@ -16657,7 +16665,7 @@ const loadPreset = (index) => {
     
     // 初期サイズを記録（フォールバック用）
     setTimeout(() => {
-        const container = document.querySelector('.input-section .canvas-container');
+        const container = getModelCanvasContainer();
         if (container) {
             const rect = container.getBoundingClientRect();
             fallbackLastSize = { width: Math.round(rect.width), height: Math.round(rect.height) };
@@ -16676,8 +16684,8 @@ const loadPreset = (index) => {
     
     document.addEventListener('mousemove', (e) => {
         // リサイズ中かどうかをチェック（カーソルがリサイズ用の場合）
-        if (e.target && e.target.closest && e.target.closest('.input-section .canvas-container')) {
-            const container = e.target.closest('.input-section .canvas-container');
+        if (e.target && e.target.closest && e.target.closest('#model-canvas-container, .input-section .canvas-container, .canvas-container')) {
+            const container = e.target.closest('#model-canvas-container, .input-section .canvas-container, .canvas-container');
             const rect = container.getBoundingClientRect();
             const isNearBottomRight = (e.clientY > rect.bottom - 20) && (e.clientX > rect.right - 20);
             
