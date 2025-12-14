@@ -853,16 +853,55 @@ function updateModel3DView(nodes, members, loadData = {}) {
             emissiveIntensity: 0.2
         });
 
+        const springLineMaterial = new THREE.LineBasicMaterial({ color: 0xE65100 });
+        const createSpringLine = (origin, axisDir, opts = {}) => {
+            const length = opts.length ?? 0.3;
+            const radius = opts.radius ?? 0.05;
+            const turns = opts.turns ?? 5;
+            const segments = opts.segments ?? 60;
+
+            const dir = axisDir.clone().normalize();
+            const tmpUp = Math.abs(dir.dot(new THREE.Vector3(0, 1, 0))) > 0.9
+                ? new THREE.Vector3(1, 0, 0)
+                : new THREE.Vector3(0, 1, 0);
+            const n1 = new THREE.Vector3().crossVectors(dir, tmpUp).normalize();
+            const n2 = new THREE.Vector3().crossVectors(dir, n1).normalize();
+
+            const points = [];
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                const along = t * length;
+                const ang = t * turns * Math.PI * 2;
+                const offset = new THREE.Vector3()
+                    .addScaledVector(n1, Math.cos(ang) * radius)
+                    .addScaledVector(n2, Math.sin(ang) * radius);
+                const p = origin.clone().addScaledVector(dir, along).add(offset);
+                points.push(p);
+            }
+            const geom = new THREE.BufferGeometry().setFromPoints(points);
+            return new THREE.Line(geom, springLineMaterial);
+        };
+
         if (member.i_conn === 'pinned') {
             const hingeSphere = new THREE.Mesh(new THREE.SphereGeometry(0.12, 24, 24), redMaterial);
             hingeSphere.position.copy(p1).addScaledVector(directionNormalized, 0.3);
             modelGroup.add(hingeSphere);
         }
 
+        if (member.i_conn === 'spring') {
+            const origin = p1.clone().addScaledVector(directionNormalized, 0.18);
+            modelGroup.add(createSpringLine(origin, directionNormalized));
+        }
+
         if (member.j_conn === 'pinned') {
             const hingeSphere = new THREE.Mesh(new THREE.SphereGeometry(0.12, 24, 24), redMaterial);
             hingeSphere.position.copy(p2).addScaledVector(directionNormalized, -0.3);
             modelGroup.add(hingeSphere);
+        }
+
+        if (member.j_conn === 'spring') {
+            const origin = p2.clone().addScaledVector(directionNormalized, -0.18);
+            modelGroup.add(createSpringLine(origin, directionNormalized.clone().negate()));
         }
     });
 

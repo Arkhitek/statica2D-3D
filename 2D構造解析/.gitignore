@@ -1,8 +1,0 @@
-# 巨大なライブラリフォルダ
-node_modules/
-
-# PCでのテストに使う秘密の鍵ファイル
-.env
-.env.development.local
-# Local Netlify folder
-.netlify

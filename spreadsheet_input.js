@@ -54,15 +54,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     while(nodesData.length < 50) nodesData.push(['', '', 'Free', '', '', '']);
 
+    const normalizeConnDisplay = (value) => {
+        const raw = safeVal(value) || 'Rigid';
+        const v = String(raw).trim().toLowerCase();
+        if (v === 'pinned' || v === 'pin') return 'Pin';
+        if (v === 'spring') return 'Spring';
+        return 'Rigid';
+    };
+
     const membersData = initialMembers.map(m => {
-        let conn1Display = safeVal(m.conn1) || 'Rigid';
-        let conn2Display = safeVal(m.conn2) || 'Rigid';
-
-        conn1Display = conn1Display.charAt(0).toUpperCase() + conn1Display.slice(1).toLowerCase();
-        conn2Display = conn2Display.charAt(0).toUpperCase() + conn2Display.slice(1).toLowerCase();
-
-        if (conn1Display === 'Pinned') conn1Display = 'Pin';
-        if (conn2Display === 'Pinned') conn2Display = 'Pin';
+        const conn1Display = normalizeConnDisplay(m.conn1);
+        const conn2Display = normalizeConnDisplay(m.conn2);
 
         return [
             safeVal(m.node1), safeVal(m.node2),
@@ -76,7 +78,8 @@ document.addEventListener('DOMContentLoaded', () => {
             safeVal(m.spring_j_Kx), safeVal(m.spring_j_Ky), safeVal(m.spring_j_Kr)
         ];
     });
-    while(membersData.length < 50) membersData.push(['', '', '', '', '', '', '', '', '', '', '', '', '', 'Rigid', 'Rigid', '', '', '', '', '', '', '']);
+    // columns: 0-13(14列)は部材情報、14-15が接合、16-21がバネ
+    while(membersData.length < 50) membersData.push(['', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Rigid', 'Rigid', '', '', '', '', '', '']);
 
     const nodeLoadsData = initialNodeLoads.map(l => [
         safeVal(l.node), safeVal(l.px), safeVal(l.py), safeVal(l.mz)
@@ -334,10 +337,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 if ((n1 === '' || n1 === null) && (n2 === '' || n2 === null)) return;
 
                 // 列順: 0:n1 1:n2 2:E 3:F 4:I 5:A 6:Z 7:i 8:J 9:Iw 10:K 11:density 12:name 13:axis 14:conn1 15:conn2 16-21:springs
-                let conn1 = row[14] || 'Rigid';
-                let conn2 = row[15] || 'Rigid';
-                if (`${conn1}`.toLowerCase() === 'pin') conn1 = 'Pinned';
-                if (`${conn2}`.toLowerCase() === 'pin') conn2 = 'Pinned';
+                const normalizeConnForParent = (conn) => {
+                    const v = String(conn || '').trim().toLowerCase();
+                    if (v === 'pin' || v === 'pinned') return 'Pinned';
+                    if (v === 'spring') return 'Spring';
+                    return 'Rigid';
+                };
+                const conn1 = normalizeConnForParent(row[14] || 'Rigid');
+                const conn2 = normalizeConnForParent(row[15] || 'Rigid');
 
                 members.push({
                     node1: n1, node2: n2,

@@ -997,6 +997,39 @@ function createMemberMesh(member, nodes) {
     const redMaterial = new THREE.MeshLambertMaterial({ color: 0xFF0000 });
     const whiteMaterial = new THREE.MeshLambertMaterial({ color: 0xFFFFFF });
 
+    const springGroup = new THREE.Group();
+    const springLineMaterial = new THREE.LineBasicMaterial({ color: 0xE65100 });
+
+    const createSpring = (origin, axisDir, opts = {}) => {
+        const length = opts.length ?? 0.35;
+        const radius = opts.radius ?? 0.06;
+        const turns = opts.turns ?? 5;
+        const segments = opts.segments ?? 60;
+
+        const dir = axisDir.clone().normalize();
+        const tmpUp = Math.abs(dir.dot(new THREE.Vector3(0, 1, 0))) > 0.9
+            ? new THREE.Vector3(1, 0, 0)
+            : new THREE.Vector3(0, 1, 0);
+        const n1 = new THREE.Vector3().crossVectors(dir, tmpUp).normalize();
+        const n2 = new THREE.Vector3().crossVectors(dir, n1).normalize();
+
+        const points = [];
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const along = t * length;
+            const ang = t * turns * Math.PI * 2;
+            const offset = new THREE.Vector3()
+                .addScaledVector(n1, Math.cos(ang) * radius)
+                .addScaledVector(n2, Math.sin(ang) * radius);
+            const p = origin.clone()
+                .addScaledVector(dir, along)
+                .add(offset);
+            points.push(p);
+        }
+        const geom = new THREE.BufferGeometry().setFromPoints(points);
+        return new THREE.Line(geom, springLineMaterial);
+    };
+
     const createHinge = () => {
         const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.15, 32, 32), redMaterial);
         const group = new THREE.Group();
@@ -1010,15 +1043,27 @@ function createMemberMesh(member, nodes) {
         hingeGroup.add(hingeI);
     }
 
+    if (member.i_conn === 'spring') {
+        const origin = p1.clone().addScaledVector(direction, 0.2);
+        springGroup.add(createSpring(origin, direction));
+    }
+
     if (member.j_conn === 'pinned') {
         const hingeJ = createHinge();
         hingeJ.position.copy(p2).addScaledVector(direction, -0.35);
         hingeGroup.add(hingeJ);
     }
 
-    if (hingeGroup.children.length > 0) {
+    if (member.j_conn === 'spring') {
+        const origin = p2.clone().addScaledVector(direction, -0.2);
+        springGroup.add(createSpring(origin, direction.clone().negate()));
+    }
+
+    if (hingeGroup.children.length > 0 || springGroup.children.length > 0) {
         const combinedGroup = new THREE.Group();
-        combinedGroup.add(mesh, hingeGroup);
+        combinedGroup.add(mesh);
+        if (hingeGroup.children.length > 0) combinedGroup.add(hingeGroup);
+        if (springGroup.children.length > 0) combinedGroup.add(springGroup);
         return combinedGroup;
     }
 

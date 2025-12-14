@@ -39,6 +39,19 @@ const CONFIG = {
     }
 };
 
+// 2Dフォルダ配下からでも、ルート側の共通HTMLを参照できるようにする
+const resolveSharedHtmlPath = (fileName) => {
+    try {
+        const pathname = window.location && typeof window.location.pathname === 'string'
+            ? window.location.pathname
+            : '';
+        if (pathname.includes('/2D構造解析/')) return `../${fileName}`;
+    } catch (e) {
+        // ignore
+    }
+    return fileName;
+};
+
 // 単位・定数変換テーブル
 const UNIT_CONVERSION = {
     // センチメートル → ミリメートル / メートル の簡易変換
@@ -3285,7 +3298,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const sectionBtn = document.getElementById('bulk-section-btn');
         if (sectionBtn) {
             sectionBtn.addEventListener('click', () => {
-                const url = `steel_selector.html?targetMember=bulk&bulk=true`;
+                const url = `${resolveSharedHtmlPath('steel_selector.html')}?targetMember=bulk&bulk=true`;
                 window.open(url, 'BulkSteelSelector', 'width=1200,height=800,scrollbars=yes,resizable=yes');
                 
                 // window.bulkSectionProperties は communication.js 等で受け取る想定
@@ -4815,7 +4828,7 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 // 密度 (Density)
                 if (cell.classList.contains('density-cell') || cell.querySelector('input[title*="密度"]')) {
-                    cell.classList.add('col-material', 'density-column');
+                    cell.classList.add('density-cell', 'col-material', 'density-column');
                     continue; 
                 }
 
@@ -5204,18 +5217,92 @@ document.addEventListener('DOMContentLoaded', () => {
             return true; // 隠す理由がなければ表示
         };
 
-        // ヘッダーの表示切替
-        const headers = table.querySelectorAll('thead th');
-        headers.forEach(th => {
-            th.style.display = shouldShow(th) ? '' : 'none';
+        // ヘッダーの表示切替（ここで「列番号ごとの表示状態」を確定させる）
+        const headers = Array.from(table.querySelectorAll('thead th'));
+
+        // 重要: 行セル数がヘッダーと一致していないと、列トグルで見かけ上の「ずれ」が発生する。
+        // 特に密度列は過去実装で追加/削除されており、削除された行は列が左詰めになってしまう。
+        // ここで密度セルを必ず所定位置に補完し、列構造を正規化する。
+        const densityHeaderIndex = headers.findIndex(th => th.classList.contains('density-column'));
+        const ensureDensityCellForRow = (row, rowIndexForId) => {
+            if (densityHeaderIndex < 0) return;
+
+            const allCells = Array.from(row.cells);
+            const existingCell = allCells.find(td => td && td.querySelector && td.querySelector('input[title*="密度"]'));
+
+            // 密度セルに入れる値（既存があれば維持、なければEから推定）
+            let currentDensity = NaN;
+            if (existingCell) {
+                const input = existingCell.querySelector('input[title*="密度"]');
+                const v = input ? parseFloat(input.value) : NaN;
+                if (Number.isFinite(v)) currentDensity = v;
+            }
+            if (!Number.isFinite(currentDensity)) {
+                try {
+                    const eCell = row.cells[3];
+                    const eSelect = eCell ? eCell.querySelector('select') : null;
+                    const eValue = eSelect ? eSelect.value : '205000';
+                    currentDensity = MATERIAL_DENSITY_DATA[eValue] || MATERIAL_DENSITY_DATA['custom'] || 7850;
+                } catch (e) {
+                    currentDensity = 7850;
+                }
+            }
+
+            // 既存セルが無い → 挿入
+            if (!existingCell) {
+                const insertAt = Math.min(densityHeaderIndex, row.cells.length);
+                const td = row.insertCell(insertAt);
+                td.innerHTML = createDensityInputHTML(`member-density-row-${rowIndexForId}`, currentDensity);
+                td.classList.add('density-cell', 'col-material', 'density-column');
+                return;
+            }
+
+            // 既存セルがあるが位置が違う → 正しい列位置へ移動（内容は再生成してイベントも復旧）
+            if (existingCell.cellIndex !== densityHeaderIndex) {
+                existingCell.remove();
+                const insertAt = Math.min(densityHeaderIndex, row.cells.length);
+                const td = row.insertCell(insertAt);
+                td.innerHTML = createDensityInputHTML(`member-density-row-${rowIndexForId}`, currentDensity);
+                td.classList.add('density-cell', 'col-material', 'density-column');
+                return;
+            }
+
+            // 位置OK → クラスだけ保証
+            existingCell.classList.add('density-cell', 'col-material', 'density-column');
+        };
+
+        const bodyRowsForNormalize = Array.from(table.querySelectorAll('tbody tr'));
+        bodyRowsForNormalize.forEach((row, idx) => {
+            // まず密度セルを正規化（列数/列位置の崩れを解消）
+            ensureDensityCellForRow(row, idx);
+
+            // 次に、断面選択ボタン列など「行ごとに挿入され得るセル」を統一。
+            // 初期HTMLから生成された行などで setupMemberRowSpecialFeatures が未適用だと
+            // 列トグル時にヘッダーと内容がずれる原因になる。
+            try {
+                if (typeof setupMemberRowSpecialFeatures === 'function') {
+                    setupMemberRowSpecialFeatures(row);
+                }
+            } catch (e) {
+                console.warn('setupMemberRowSpecialFeatures failed during visibility update', e);
+            }
+        });
+        const columnVisible = headers.map(th => {
+            const visible = shouldShow(th);
+            th.style.display = visible ? '' : 'none';
+            return visible;
         });
 
         // ボディのセルの表示切替
+        // 注意: 各tdのclass付与漏れがあると、class判定方式ではヘッダーとズレる。
+        // そのため「ヘッダーの列番号」に合わせて同じ列のtdを一括で表示/非表示にする。
         const rows = table.querySelectorAll('tbody tr');
         rows.forEach(row => {
-            Array.from(row.cells).forEach(cell => {
-                cell.style.display = shouldShow(cell) ? '' : 'none';
-            });
+            const cells = Array.from(row.cells);
+            for (let i = 0; i < cells.length; i++) {
+                const visible = (i < columnVisible.length) ? columnVisible[i] : true;
+                cells[i].style.display = visible ? '' : 'none';
+            }
         });
     };
     // ▲▲▲ 追加終了 ▲▲▲
@@ -10386,56 +10473,29 @@ document.addEventListener('DOMContentLoaded', () => {
         // 注: ヘッダーの表示切替は updateMemberTableVisibility に任せるため、ここでは操作しません
         
         // 既存の部材行に密度列を追加/削除
+        // 注意: 列セルをDOMから削除すると、列トグル時にヘッダーと内容がズレる。
+        // そのため密度セルは常に保持し、表示/非表示は updateMemberTableVisibility に一元化する。
         const memberRows = elements.membersTable.rows;
         for (let i = 0; i < memberRows.length; i++) {
             const row = memberRows[i];
             
             if (isChecked) {
-                // 密度列が存在しない場合は追加（重複チェック強化）
-                let densityCell = row.querySelector('.density-cell');
-                const existingDensityCells = row.querySelectorAll('.density-cell');
-                
-                // 複数の密度セルがある場合は余分なものを削除
-                if (existingDensityCells.length > 1) {
-                    for (let j = 1; j < existingDensityCells.length; j++) {
-                        existingDensityCells[j].remove();
+                // 自重ON時は、E値から密度の初期値を推定して空欄を埋める（既存値は尊重）
+                const densityInput = row.querySelector('input[title*="密度"]');
+                const hasValue = densityInput && String(densityInput.value).trim() !== '' && Number.isFinite(parseFloat(densityInput.value));
+                if (densityInput && !hasValue) {
+                    try {
+                        const eCell = row.cells[3];
+                        const eSelect = eCell ? eCell.querySelector('select') : null;
+                        const eValue = eSelect ? eSelect.value : '205000';
+                        const density = MATERIAL_DENSITY_DATA[eValue] || MATERIAL_DENSITY_DATA['custom'] || 7850;
+                        densityInput.value = density;
+                    } catch (e) {
+                        // ignore
                     }
-                    densityCell = existingDensityCells[0];
-                }
-                
-                if (!densityCell) {
-                    // 挿入位置を動的に決定（断面係数Zセルの後）
-                    let insertPosition = 8; // 保守的なデフォルト
-                    // より安全に、Z値セルを探してその後ろに挿入
-                    for (let k = 0; k < row.cells.length; k++) {
-                        const cell = row.cells[k];
-                        if (cell.querySelector('input[title*="断面係数"]')) {
-                            insertPosition = k + 1;
-                            // K列がある場合はその次へ挿入
-                            if (row.querySelector('.buckling-k-input')) insertPosition = k + 2;
-                            break;
-                        }
-                    }
-                    
-                    densityCell = row.insertCell(insertPosition);
-                    // col-materialとdensity-columnの両方を付与して表示制御対象にする
-                    // これにより「材料情報」トグルと「自重考慮」チェックボックスの両方の影響を受ける
-                    densityCell.className = 'density-cell col-material density-column'; 
-                    
-                    // 現在のE値から密度を推定して設定
-                    const eCell = row.cells[3];
-                    const eSelect = eCell.querySelector('select');
-                    const eValue = eSelect ? eSelect.value : '205000';
-                    const density = MATERIAL_DENSITY_DATA[eValue] || MATERIAL_DENSITY_DATA['custom'];
-                    
-                    densityCell.innerHTML = createDensityInputHTML(`member-density-${i}`, density);
                 }
             } else {
-                // 密度列を削除（DOMから削除し、表示状態の整合性は updateMemberTableVisibility で保つ）
-                const densityCell = row.querySelector('.density-cell');
-                if (densityCell) {
-                    densityCell.remove();
-                }
+                // 自重OFF時も密度セルは保持（表示はupdateMemberTableVisibilityが制御）
             }
         }
         
@@ -10484,7 +10544,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // 断面選択ツールを開く関数
     const openSteelSelector = (memberIndex, options = {}) => {
-        const url = `steel_selector.html?targetMember=${memberIndex}`;
+        const url = `${resolveSharedHtmlPath('steel_selector.html')}?targetMember=${memberIndex}`;
         const popup = window.open(url, 'SteelSelector', 'width=1200,height=800,scrollbars=yes,resizable=yes');
 
         if (!popup) {
@@ -10652,7 +10712,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     // 部材追加設定の断面選択ボタン
     document.getElementById('add-popup-select-section').onclick = () => {
-        const url = `steel_selector.html?targetMember=addDefaults`;
+        const url = `${resolveSharedHtmlPath('steel_selector.html')}?targetMember=addDefaults`;
         console.log('🚀 断面選択ウィンドウを開きます:', url);
         const popup = window.open(url, 'SteelSelector', 'width=1200,height=800,scrollbars=yes,resizable=yes');
 
@@ -13161,14 +13221,10 @@ const createEInputHTML = (idPrefix, currentE = '205000') => {
         </div>
     `;
 
-        // 自重考慮チェックボックスがオンの場合、密度列を追加
-        // プリセット読み込み中は密度列の表示状態に関係なく追加しない
-        const shouldAddDensity = !window.isLoadingPreset &&
-                                elements.considerSelfWeightCheckbox &&
-                                elements.considerSelfWeightCheckbox.checked;
-
-        if (shouldAddDensity) {
-            const density = MATERIAL_DENSITY_DATA[E] || MATERIAL_DENSITY_DATA['custom'];
+        // 密度列は常に保持（列数を固定し、列トグル時のヘッダー/内容ズレを防止）
+        // 表示/非表示は updateMemberTableVisibility（自重ON/OFFと「材料情報」トグル）で制御。
+        {
+            const density = MATERIAL_DENSITY_DATA[E] || MATERIAL_DENSITY_DATA['custom'] || 7850;
             baseColumns.push(createDensityInputHTML(`member-density-${i}-${j}`, density));
         }
 
@@ -18057,7 +18113,7 @@ const initializeFrameGenerator = () => {
 
                     // steel_selector.htmlを開く（特別な識別子を使用）
                     const rowId = `add-temp-${nodeI}-${nodeJ}`;
-                    const url = `steel_selector.html?targetMember=${encodeURIComponent(rowId)}`;
+                    const url = `${resolveSharedHtmlPath('steel_selector.html')}?targetMember=${encodeURIComponent(rowId)}`;
                     const popup = window.open(url, 'SteelSelector', 'width=1200,height=800,scrollbars=yes,resizable=yes');
 
                     if (!popup) {
@@ -18561,7 +18617,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 // 新しいウィンドウで3Dビューアを開く
-                viewerWindow = window.open('viewer_3d.html', 'Statica3DViewer', 'width=800,height=600,resizable=yes,scrollbars=yes');
+                viewerWindow = window.open(resolveSharedHtmlPath('viewer_3d.html'), 'Statica3DViewer', 'width=800,height=600,resizable=yes,scrollbars=yes');
 
                 if (!viewerWindow) {
                     safeAlert('ポップアップがブロックされた可能性があります。3Dビューアを開けませんでした。');

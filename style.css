@@ -131,6 +131,27 @@ tr.input-error {
     display: block;
 }
 
+/* --- 2D(index.html?embed=1)をiframe埋め込みした時の見た目調整 --- */
+body.embedded {
+    padding: 0;
+    background-color: transparent;
+}
+
+body.embedded .container {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+    border-radius: 0;
+    background-color: transparent;
+}
+
+body.embedded header,
+body.embedded .analysis-mode-switcher,
+body.embedded footer.app-footer {
+    display: none;
+}
+
 /* --- 2D表示制御(列/フィールドの非表示) --- */
 .hidden-col {
     display: none !important;
@@ -743,9 +764,10 @@ td input.error, td select.error {
 
 /* 検定比図のキャンバススタイル */
 .section-check-item canvas {
-    width: auto !important;
-    height: auto !important;
-    max-width: none !important;
+    /* JS(getDrawingContext等)がcanvas要素のサイズを動的制御できるようにする */
+    width: 100%;
+    height: auto;
+    max-width: 100%;
 }
 
 /* 表示制御チェックボックスのスタイル */
@@ -778,10 +800,10 @@ canvas {
 
 /* 結果表示用のキャンバス（変位図、応力図、検定比図など） */
 .result-visuals canvas {
-    /* JavaScriptで動的にサイズを設定するため、width/height指定なし */
-    width: auto !important;
-    height: auto !important;
-    max-width: none !important;
+    /* キャンバスをコンテナ幅に追従させ、JS側でheight等を調整できるようにする */
+    width: 100%;
+    height: auto;
+    max-width: 100%;
 }
 
 /* 応力度コンター図キャンバス専用スタイル */

@@ -24,7 +24,20 @@ function openSteelSelector(memberIndex, currentProps = {}) {
             strengthValue: currentProps.strengthValue || '235'
         });
         
-        const url = `steel_selector.html?${params.toString()}`;
+        const resolveRootRelative = (fileName) => {
+            try {
+                const pathname = window.location && typeof window.location.pathname === 'string'
+                    ? window.location.pathname
+                    : '';
+                // 2Dフォルダ配下からでも、ルート側の共通HTMLを開けるようにする
+                if (pathname.includes('/2D構造解析/')) return `../${fileName}`;
+            } catch (e) {
+                // ignore
+            }
+            return fileName;
+        };
+
+        const url = `${resolveRootRelative('steel_selector.html')}?${params.toString()}`;
         const windowFeatures = {
             width: 1200,
             height: 800,
@@ -153,6 +166,13 @@ function sendDataToParent(properties) {
         
         // localStorageにデータを保存
         const serializedData = JSON.stringify(dataToSend);
+        // デバッグ用に生データのコピーも保存しておく（受信側で突合するため）
+        try {
+            localStorage.setItem('steelSelectionForFrameAnalyzer_debug', serializedData);
+            try { sessionStorage.setItem('steelSelectionForFrameAnalyzer_debug_ts', String(dataToSend.timestamp)); } catch (_) {}
+        } catch (dbgErr) {
+            console.warn('debug copy to localStorage/sessionStorage failed', dbgErr);
+        }
         localStorage.setItem('steelSelectionForFrameAnalyzer', serializedData);
 
         console.log('✅ データ送信完了:', {

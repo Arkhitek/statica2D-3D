@@ -5739,32 +5739,76 @@ document.addEventListener('DOMContentLoaded', () => {
                     const Iz = axisProps3D?.local?.inertia?.z ?? member.Iz;
                     const J = member.J;
                     
-                    const EA_L = E * A / L;
-                    const GJ_L = G * J / L;
-                    const EIy_L3 = 12 * E * Iy / (L*L*L);
-                    const EIy_L2 = 6 * E * Iy / (L*L);
-                    const EIy_L = 4 * E * Iy / L;
-                    const EIy_L_half = 2 * E * Iy / L;
-                    const EIz_L3 = 12 * E * Iz / (L*L*L);
-                    const EIz_L2 = 6 * E * Iz / (L*L);
-                    const EIz_L = 4 * E * Iz / L;
-                    const EIz_L_half = 2 * E * Iz / L;
-                    
-                    // 簡易的な剛接合の剛性マトリックス（ピン・ローラー接合は後で対応）
-                    const k_local_3d = [
-                        [EA_L, 0, 0, 0, 0, 0, -EA_L, 0, 0, 0, 0, 0],
-                        [0, EIz_L3, 0, 0, 0, EIz_L2, 0, -EIz_L3, 0, 0, 0, EIz_L2],
-                        [0, 0, EIy_L3, 0, -EIy_L2, 0, 0, 0, -EIy_L3, 0, -EIy_L2, 0],
-                        [0, 0, 0, GJ_L, 0, 0, 0, 0, 0, -GJ_L, 0, 0],
-                        [0, 0, -EIy_L2, 0, EIy_L, 0, 0, 0, EIy_L2, 0, EIy_L_half, 0],
-                        [0, EIz_L2, 0, 0, 0, EIz_L, 0, -EIz_L2, 0, 0, 0, EIz_L_half],
-                        [-EA_L, 0, 0, 0, 0, 0, EA_L, 0, 0, 0, 0, 0],
-                        [0, -EIz_L3, 0, 0, 0, -EIz_L2, 0, EIz_L3, 0, 0, 0, -EIz_L2],
-                        [0, 0, -EIy_L3, 0, EIy_L2, 0, 0, 0, EIy_L3, 0, EIy_L2, 0],
-                        [0, 0, 0, -GJ_L, 0, 0, 0, 0, 0, GJ_L, 0, 0],
-                        [0, 0, -EIy_L2, 0, EIy_L_half, 0, 0, 0, EIy_L2, 0, EIy_L, 0],
-                        [0, EIz_L2, 0, 0, 0, EIz_L_half, 0, -EIz_L2, 0, 0, 0, EIz_L]
-                    ];
+                    // 端部バネ(spring)は3Dでは「軸方向 + 2平面曲げ(ry/rz)」として反映する。
+                    // UIのKx/Ky/Krを、局所座標系の以下へ割当:
+                    //  - Kx: ux
+                    //  - Ky: uy と uz (同一値で共有)
+                    //  - Kr: ry と rz (同一値で共有)
+                    const normalizeSpringFor3D = (springData) => {
+                        const src = springData || {};
+                        return {
+                            Kx: src.Kx || 0,
+                            Ky: src.Ky || 0,
+                            Kr: src.Kr || 0,
+                            rigidKx: !!src.rigidKx,
+                            rigidKy: !!src.rigidKy,
+                            rigidKr: !!src.rigidKr
+                        };
+                    };
+
+                    const iConnForSprings = (member.i_conn === 'spring') ? 'spring' : 'rigid';
+                    const jConnForSprings = (member.j_conn === 'spring') ? 'spring' : 'rigid';
+                    const spring_i_3d = normalizeSpringFor3D(member.spring_i);
+                    const spring_j_3d = normalizeSpringFor3D(member.spring_j);
+
+                    // 2D(EB)の端部バネ合成を用いて、3Dの局所剛性(12x12)を組み立てる。
+                    const k2d_z = compute2DLocalStiffnessWithEndSpringsEB({
+                        E,
+                        A,
+                        I: Iz,
+                        L,
+                        i_conn: iConnForSprings,
+                        j_conn: jConnForSprings,
+                        spring_i: spring_i_3d,
+                        spring_j: spring_j_3d
+                    });
+                    const k2d_y = compute2DLocalStiffnessWithEndSpringsEB({
+                        E,
+                        A,
+                        I: Iy,
+                        L,
+                        i_conn: iConnForSprings,
+                        j_conn: jConnForSprings,
+                        spring_i: spring_i_3d,
+                        spring_j: spring_j_3d
+                    });
+
+                    const k_local_3d = Array.from({ length: 12 }, () => Array(12).fill(0));
+                    const copySub = (src, srcIdx, dst, dstIdx, sign) => {
+                        for (let r = 0; r < srcIdx.length; r++) {
+                            for (let c = 0; c < srcIdx.length; c++) {
+                                const s = (sign?.[r] ?? 1) * (sign?.[c] ?? 1);
+                                dst[dstIdx[r]][dstIdx[c]] = (src[srcIdx[r]]?.[srcIdx[c]] ?? 0) * s;
+                            }
+                        }
+                    };
+
+                    // 軸方向: 2Dの u(0,3) を 3Dの ux(0,6) へ
+                    copySub(k2d_z, [0, 3], k_local_3d, [0, 6]);
+
+                    // 曲げ(x-y平面): 2Dの (v,theta)=(1,2,4,5) を 3Dの (uy,rz)=(1,5,7,11) へ
+                    copySub(k2d_z, [1, 2, 4, 5], k_local_3d, [1, 5, 7, 11]);
+
+                    // 曲げ(x-z平面): 2Dの (v,theta)=(1,2,4,5) を 3Dの (uz,ry)=(2,4,8,10) へ
+                    // 3Dのryは2Dのthetaと符号が反転するため、theta成分へ -1 を適用
+                    copySub(k2d_y, [1, 2, 4, 5], k_local_3d, [2, 4, 8, 10], [1, -1, 1, -1]);
+
+                    // ねじり(rx): 端部バネ入力が現状ないため、通常のねじり剛性のみ付与
+                    const GJ_L = (G > 0 && J > 0) ? (G * J / L) : 0;
+                    k_local_3d[3][3] = GJ_L;
+                    k_local_3d[3][9] = -GJ_L;
+                    k_local_3d[9][3] = -GJ_L;
+                    k_local_3d[9][9] = GJ_L;
 
                     const globalIndexMap = [
                         member.i * 6,
@@ -6489,6 +6533,109 @@ document.addEventListener('DOMContentLoaded', () => {
         const f_beam = [
             [L / EA, 0, 0],
             [0, L3 / (3 * EI) + shear_flex, L2 / (2 * EI)],
+            [0, L2 / (2 * EI), L / EI]
+        ];
+
+        const f_spring_i = getFlexibility(i_conn, spring_i);
+        const f_spring_j = getFlexibility(j_conn, spring_j);
+
+        const B = [
+            [-1, 0, 0],
+            [0, -1, 0],
+            [0, -L, -1]
+        ];
+
+        const f_total = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+        for (let r = 0; r < 3; r++) {
+            for (let c = 0; c < 3; c++) {
+                let val = f_beam[r][c] || 0;
+                if (r === c) val += (f_spring_j[r] || 0);
+                for (let k = 0; k < 3; k++) {
+                    val += (B[k][r] || 0) * (f_spring_i[k] || 0) * (B[k][c] || 0);
+                }
+                f_total[r][c] = val;
+            }
+        }
+
+        const K_jj = invert3x3(f_total);
+        if (!K_jj) return zero6();
+
+        const K_ij = Array.from({ length: 3 }, () => Array(3).fill(0));
+        for (let r = 0; r < 3; r++) {
+            for (let c = 0; c < 3; c++) {
+                let sum = 0;
+                for (let k = 0; k < 3; k++) sum += B[r][k] * K_jj[k][c];
+                K_ij[r][c] = sum;
+            }
+        }
+        const K_ji = K_ij[0].map((_, col) => K_ij.map(row => row[col]));
+        const K_ii = Array.from({ length: 3 }, () => Array(3).fill(0));
+        for (let r = 0; r < 3; r++) {
+            for (let c = 0; c < 3; c++) {
+                let sum = 0;
+                for (let k = 0; k < 3; k++) sum += B[r][k] * K_ji[k][c];
+                K_ii[r][c] = sum;
+            }
+        }
+
+        return [
+            [K_ii[0][0], K_ii[0][1], K_ii[0][2], K_ij[0][0], K_ij[0][1], K_ij[0][2]],
+            [K_ii[1][0], K_ii[1][1], K_ii[1][2], K_ij[1][0], K_ij[1][1], K_ij[1][2]],
+            [K_ii[2][0], K_ii[2][1], K_ii[2][2], K_ij[2][0], K_ij[2][1], K_ij[2][2]],
+            [K_ji[0][0], K_ji[0][1], K_ji[0][2], K_jj[0][0], K_jj[0][1], K_jj[0][2]],
+            [K_ji[1][0], K_ji[1][1], K_ji[1][2], K_jj[1][0], K_jj[1][1], K_jj[1][2]],
+            [K_ji[2][0], K_ji[2][1], K_ji[2][2], K_jj[2][0], K_jj[2][1], K_jj[2][2]]
+        ];
+    }
+
+    // 3D局所剛性(12x12)組み立て用: Euler-Bernoulli 梁(せん断変形なし)の2D局所剛性(6x6)を、端部バネで合成
+    // 既存の3D局所剛性(EB梁)と整合させるため、compute2DLocalStiffnessWithEndSprings の剪断柔度は用いない。
+    function compute2DLocalStiffnessWithEndSpringsEB({ E, A, I, L, i_conn, j_conn, spring_i, spring_j }) {
+        const zero6 = () => Array.from({ length: 6 }, () => Array(6).fill(0));
+        const invert3x3 = (m) => {
+            const det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+                        m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                        m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+            if (Math.abs(det) < 1e-30) return null;
+            const invDet = 1 / det;
+            return [
+                [(m[1][1] * m[2][2] - m[1][2] * m[2][1]) * invDet, (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * invDet, (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * invDet],
+                [(m[1][2] * m[2][0] - m[1][0] * m[2][2]) * invDet, (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * invDet, (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * invDet],
+                [(m[1][0] * m[2][1] - m[1][1] * m[2][0]) * invDet, (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * invDet, (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * invDet]
+            ];
+        };
+
+        const getFlexibility = (connType, springData) => {
+            if (connType === 'rigid') return [0, 0, 0];
+            if (connType === 'pinned') return [0, 0, 1e9];
+            if (connType === 'spring' && springData) {
+                let fx = 1e9;
+                if (springData.rigidKx) fx = 0;
+                else if (springData.Kx && springData.Kx > 1e-12) fx = 1 / springData.Kx;
+
+                let fy = 1e9;
+                if (springData.rigidKy) fy = 0;
+                else if (springData.Ky && springData.Ky > 1e-12) fy = 1 / springData.Ky;
+
+                let fr = 1e9;
+                if (springData.rigidKr) fr = 0;
+                else if (springData.Kr && springData.Kr > 1e-12) fr = 1 / springData.Kr;
+
+                return [fx, fy, fr];
+            }
+            return [0, 0, 0];
+        };
+
+        if (!(L > 0) || !(E > 0) || !(A > 0) || !(I > 0)) return zero6();
+
+        const EI = E * I;
+        const EA = E * A;
+        const L2 = L * L;
+        const L3 = L2 * L;
+
+        const f_beam = [
+            [L / EA, 0, 0],
+            [0, L3 / (3 * EI), L2 / (2 * EI)],
             [0, L2 / (2 * EI), L / EI]
         ];
 
@@ -7797,7 +7944,213 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     };
-    const drawConnections = (ctx, transform, nodes, members) => { ctx.fillStyle = 'white'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; const offset = 6; const projectionMode = getCurrentProjectionMode(); const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n_i = projectedNodes[m.i]; const p_i = transform(n_i.x, n_i.y); if (m.i_conn === 'pinned') { const p_i_offset = { x: p_i.x + offset * m.c, y: p_i.y - offset * m.s }; ctx.beginPath(); ctx.arc(p_i_offset.x, p_i_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } if (m.j_conn === 'pinned') { const n_j = projectedNodes[m.j]; const p_j = transform(n_j.x, n_j.y); const p_j_offset = { x: p_j.x - offset * m.c, y: p_j.y + offset * m.s }; ctx.beginPath(); ctx.arc(p_j_offset.x, p_j_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } }); };
+    const drawConnections = (ctx, transform, nodes, members, labelManager, obstacles, fontScale = 1.0) => {
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        const showStiffness = document.getElementById('show-spring-stiffness')?.checked ?? true;
+
+        const projectionMode = getCurrentProjectionMode();
+        const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode));
+        const visibleNodeIndices = getVisibleNodeIndices(nodes);
+
+        // フォーマット関数（2Dと同じ表示）
+        const fmt = (val, unit) => {
+            const uiVal = val / 1000; // 内部(kN/m) -> UI(kN/mm)
+
+            if (Math.abs(uiVal) < 1e-6) return `0${unit}`;
+
+            let numStr;
+            if (Math.abs(uiVal) < 0.001) numStr = uiVal.toExponential(1);
+            else if (Math.abs(uiVal) >= 1000) numStr = Math.round(uiVal).toString();
+            else numStr = parseFloat(uiVal.toFixed(2)).toString();
+            return `${numStr}${unit}`;
+        };
+
+        const fmtKr = (val) => {
+            const uiVal = val * 1000; // 内部(kN·m/rad) -> UI(kN·mm/rad)
+
+            if (Math.abs(uiVal) < 1e-6) return `0kN·mm`;
+
+            let numStr;
+            if (Math.abs(uiVal) < 0.1) numStr = uiVal.toExponential(1);
+            else numStr = parseFloat(uiVal.toFixed(1)).toString();
+            return `${numStr}kN·mm`;
+        };
+
+        const drawTranslationalSpring = (ctx, length, width) => {
+            const coils = 4;
+            const step = length / coils;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            for (let i = 0; i < coils; i++) {
+                ctx.lineTo((i + 0.25) * step, width);
+                ctx.lineTo((i + 0.75) * step, -width);
+                ctx.lineTo((i + 1.00) * step, 0);
+            }
+            ctx.stroke();
+        };
+
+        const drawRotationalSpring = (ctx, radius) => {
+            ctx.beginPath();
+            const points = 40;
+            const maxAngle = Math.PI * 2 * 2;
+            for (let i = 0; i <= points; i++) {
+                const angle = (i / points) * maxAngle;
+                const r = radius * (0.3 + 0.7 * (i / points));
+                const x = r * Math.cos(angle);
+                const y = r * Math.sin(angle);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        };
+
+        members.forEach((m) => {
+            if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return;
+            const n_i = projectedNodes[m.i];
+            const n_j = projectedNodes[m.j];
+            if (!n_i || !n_j) return;
+
+            const p_i = transform(n_i.x, n_i.y);
+            const p_j = transform(n_j.x, n_j.y);
+            const dx = p_j.x - p_i.x;
+            const dy = p_j.y - p_i.y;
+            const angle = Math.atan2(dy, dx);
+
+            // ピン接合
+            const pinRadius = 4;
+            if (m.i_conn === 'pinned') {
+                ctx.save();
+                ctx.fillStyle = 'white';
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(p_i.x, p_i.y, pinRadius, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            }
+            if (m.j_conn === 'pinned') {
+                ctx.save();
+                ctx.fillStyle = 'white';
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(p_j.x, p_j.y, pinRadius, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            // バネ接合（2Dと同様の記号を、投影図上の部材方向に合わせて描画）
+            const drawEndSprings = (end, point, isStart) => {
+                const connType = end === 'i' ? m.i_conn : m.j_conn;
+                if (connType !== 'spring') return;
+                const springData = end === 'i' ? m.spring_i : m.spring_j;
+                if (!springData) return;
+
+                const { Kx = 0, Ky = 0, Kr = 0, rigidKx, rigidKy, rigidKr } = springData;
+                if (rigidKx && rigidKy && rigidKr) return;
+
+                ctx.save();
+                ctx.translate(point.x, point.y);
+                const currentAngle = isStart ? angle : angle + Math.PI;
+                ctx.rotate(currentAngle);
+
+                const springColor = '#e65100';
+                const rotateColor = '#0277bd';
+                const springLen = 12;
+                const springW = 3;
+
+                // テキスト描画用情報の収集
+                const cos = Math.cos(currentAngle);
+                const sin = Math.sin(currentAngle);
+                const labelsToDraw = [];
+
+                // Kx: 部材軸方向
+                if (!rigidKx) {
+                    ctx.strokeStyle = springColor;
+                    ctx.lineWidth = 1.5;
+                    ctx.save();
+                    ctx.translate(3, 0);
+                    drawTranslationalSpring(ctx, springLen, springW);
+                    ctx.beginPath();
+                    ctx.moveTo(springLen, -4);
+                    ctx.lineTo(springLen, 4);
+                    ctx.stroke();
+                    ctx.restore();
+
+                    const lx = 3 + springLen / 2;
+                    const ly = 0;
+                    labelsToDraw.push({
+                        text: `Kx:${fmt(Kx, 'kN/mm')}`,
+                        x: point.x + lx * cos - ly * sin,
+                        y: point.y + lx * sin + ly * cos,
+                        color: springColor
+                    });
+                }
+
+                // Ky: 部材直交方向
+                if (!rigidKy) {
+                    ctx.strokeStyle = springColor;
+                    ctx.lineWidth = 1.5;
+                    ctx.save();
+                    ctx.translate(0, -4);
+                    ctx.rotate(-Math.PI / 2);
+                    drawTranslationalSpring(ctx, springLen, springW);
+                    ctx.beginPath();
+                    ctx.moveTo(springLen, -4);
+                    ctx.lineTo(springLen, 4);
+                    ctx.stroke();
+                    ctx.restore();
+
+                    const lx = 0;
+                    const ly = -4 - springLen / 2;
+                    labelsToDraw.push({
+                        text: `Ky:${fmt(Ky, 'kN/mm')}`,
+                        x: point.x + lx * cos - ly * sin,
+                        y: point.y + lx * sin + ly * cos,
+                        color: springColor
+                    });
+                }
+
+                // Kr: 回転
+                if (!rigidKr) {
+                    ctx.strokeStyle = rotateColor;
+                    ctx.lineWidth = 1.5;
+                    drawRotationalSpring(ctx, 7);
+
+                    const lx = 5;
+                    const ly = 5;
+                    labelsToDraw.push({
+                        text: `Kr:${fmtKr(Kr)}`,
+                        x: point.x + lx * cos - ly * sin,
+                        y: point.y + lx * sin + ly * cos,
+                        color: rotateColor
+                    });
+                }
+
+                ctx.restore();
+
+                // テキストの描画 (LabelManagerを使用)
+                if (showStiffness && labelManager && labelsToDraw.length > 0) {
+                    ctx.save();
+                    ctx.font = `${10 * (fontScale || 1.0)}px Arial`;
+                    labelsToDraw.forEach(l => {
+                        labelManager.draw(ctx, l.text, l.x, l.y, obstacles, {
+                            drawLeaderLine: true,
+                            color: l.color
+                        });
+                    });
+                    ctx.restore();
+                }
+            };
+
+            drawEndSprings('i', p_i, true);
+            drawEndSprings('j', p_j, false);
+        });
+    };
 
     const projectAxisToScreen = (node, axis, transform, projectionMode) => {
         const axisVectors = {
@@ -8969,6 +9322,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const w = metrics.width;
                 const h = metrics.fontBoundingBoxAscent ?? 12;
                 const padding = 6;
+                const leaderLine = options.drawLeaderLine === true;
+                const labelColor = options.color;
                 const candidates = [
                     [w/2 + padding, -padding, 'left', 'bottom'],
                     [-w/2 - padding, -padding, 'right', 'bottom'],
@@ -9013,7 +9368,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     ctx.textAlign = cand[2];
                     ctx.textBaseline = cand[3];
-                    ctx.fillText(text, x, y);
+                    {
+                        const originalFill = ctx.fillStyle;
+                        const originalStroke = ctx.strokeStyle;
+                        const originalLineWidth = ctx.lineWidth;
+                        if (labelColor) {
+                            ctx.fillStyle = labelColor;
+                            ctx.strokeStyle = labelColor;
+                        }
+                        if (leaderLine) {
+                            const centerX = (rect.x1 + rect.x2) / 2;
+                            const centerY = (rect.y1 + rect.y2) / 2;
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.moveTo(targetX, targetY);
+                            ctx.lineTo(centerX, centerY);
+                            ctx.stroke();
+                        }
+                        ctx.fillText(text, x, y);
+                        ctx.fillStyle = originalFill;
+                        ctx.strokeStyle = originalStroke;
+                        ctx.lineWidth = originalLineWidth;
+                    }
 
                     // 編集に必要な情報を保存
                     const centerX = (rect.x1 + rect.x2) / 2;
@@ -9041,7 +9417,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 const paddedRect = {x1: rect.x1 - padding, y1: rect.y1 - padding, x2: rect.x2 + padding, y2: rect.y2 + padding};
                 ctx.textAlign = fallbackCand[2];
                 ctx.textBaseline = fallbackCand[3];
-                ctx.fillText(text, x, y);
+                {
+                    const originalFill = ctx.fillStyle;
+                    const originalStroke = ctx.strokeStyle;
+                    const originalLineWidth = ctx.lineWidth;
+                    if (labelColor) {
+                        ctx.fillStyle = labelColor;
+                        ctx.strokeStyle = labelColor;
+                    }
+                    if (leaderLine) {
+                        const centerX = (rect.x1 + rect.x2) / 2;
+                        const centerY = (rect.y1 + rect.y2) / 2;
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(targetX, targetY);
+                        ctx.lineTo(centerX, centerY);
+                        ctx.stroke();
+                    }
+                    ctx.fillText(text, x, y);
+                    ctx.fillStyle = originalFill;
+                    ctx.strokeStyle = originalStroke;
+                    ctx.lineWidth = originalLineWidth;
+                }
 
                 // フォールバックの場合も情報を保存
                 const centerX = (rect.x1 + rect.x2) / 2;
@@ -9104,7 +9501,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     return { x1: pos.x - 8, y1: pos.y - 8 - 12, x2: pos.x + 8 + textWidth, y2: pos.y + 8 };
                 });
                 drawStructure(ctx, transform, nodes, members, '#333', true, true, true, drawingCtx);
-                drawConnections(ctx, transform, nodes, members);
+                const modelFontScale = (globalThis.settings?.fontScales?.model ?? globalThis.settings?.fontScale ?? 1.0);
+                drawConnections(ctx, transform, nodes, members, labelManager, nodeObstacles, modelFontScale);
                 drawBoundaryConditions(ctx, transform, nodes);
                 drawDimensions(ctx, transform, nodes, members, labelManager, nodeObstacles);
                 drawExternalLoads(ctx, transform, nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights, labelManager, nodeObstacles);
@@ -18307,11 +18705,15 @@ const loadPreset = (index) => {
     // 荷重表示制御チェックボックスのイベントリスナー
     const showExternalLoadsCheckbox = document.getElementById('show-external-loads');
     const showSelfWeightCheckbox = document.getElementById('show-self-weight');
+    const showSpringStiffnessCheckbox = document.getElementById('show-spring-stiffness');
     if (showExternalLoadsCheckbox) {
         showExternalLoadsCheckbox.addEventListener('change', drawOnCanvas);
     }
     if (showSelfWeightCheckbox) {
         showSelfWeightCheckbox.addEventListener('change', drawOnCanvas);
+    }
+    if (showSpringStiffnessCheckbox) {
+        showSpringStiffnessCheckbox.addEventListener('change', drawOnCanvas);
     }
     
     elements.saveBtn.addEventListener('click', saveInputData);
@@ -21470,6 +21872,36 @@ window.getSpreadsheetData = function () {
     }
 
     const state = window.getCurrentState();
+
+    const toSpreadsheetK = (kInternal) => {
+        const v = Number(kInternal);
+        if (!Number.isFinite(v)) return '';
+        return v / 1000; // 内部(kN/m) -> UI(kN/mm)
+    };
+    const toSpreadsheetKr = (krInternal) => {
+        const v = Number(krInternal);
+        if (!Number.isFinite(v)) return '';
+        return v * 1000; // 内部(kN·m/rad) -> UI(kNmm/rad)
+    };
+    const getConnDisplay = (conn) => {
+        const v = String(conn || '').toLowerCase();
+        if (v.includes('spring')) return 'Spring';
+        if (v.includes('pin')) return 'Pinned';
+        return 'Rigid';
+    };
+    const extractSpreadsheetSpring = (springObj) => {
+        if (!springObj || typeof springObj !== 'object') {
+            return { Kx: '', Ky: '', Kr: '' };
+        }
+        const rigidKx = !!springObj.rigidKx;
+        const rigidKy = !!springObj.rigidKy;
+        const rigidKr = !!springObj.rigidKr;
+        return {
+            Kx: rigidKx ? '' : toSpreadsheetK(springObj.Kx),
+            Ky: rigidKy ? '' : toSpreadsheetK(springObj.Ky),
+            Kr: rigidKr ? '' : toSpreadsheetKr(springObj.Kr),
+        };
+    };
     const nodes = (state.nodes || []).map(n => ({
         x: n.x,
         y: n.z, // spreadsheet Y ← 3DのZ
@@ -21494,10 +21926,14 @@ window.getSpreadsheetData = function () {
         density: '',
         name: m.sectionLabel || '',
         axis: m.sectionAxisLabel || '',
-        conn1: (String(m.i_conn).toLowerCase().includes('pin') ? 'Pinned' : 'Rigid'),
-        conn2: (String(m.j_conn).toLowerCase().includes('pin') ? 'Pinned' : 'Rigid'),
-        spring_i_Kx: '', spring_i_Ky: '', spring_i_Kr: '',
-        spring_j_Kx: '', spring_j_Ky: '', spring_j_Kr: ''
+        conn1: getConnDisplay(m.i_conn),
+        conn2: getConnDisplay(m.j_conn),
+        spring_i_Kx: (String(m.i_conn || '').toLowerCase().includes('spring') ? extractSpreadsheetSpring(m.spring_i).Kx : ''),
+        spring_i_Ky: (String(m.i_conn || '').toLowerCase().includes('spring') ? extractSpreadsheetSpring(m.spring_i).Ky : ''),
+        spring_i_Kr: (String(m.i_conn || '').toLowerCase().includes('spring') ? extractSpreadsheetSpring(m.spring_i).Kr : ''),
+        spring_j_Kx: (String(m.j_conn || '').toLowerCase().includes('spring') ? extractSpreadsheetSpring(m.spring_j).Kx : ''),
+        spring_j_Ky: (String(m.j_conn || '').toLowerCase().includes('spring') ? extractSpreadsheetSpring(m.spring_j).Ky : ''),
+        spring_j_Kr: (String(m.j_conn || '').toLowerCase().includes('spring') ? extractSpreadsheetSpring(m.spring_j).Kr : '')
     }));
 
     const nodeLoads = (state.nodeLoads || []).map(l => ({
@@ -21523,6 +21959,31 @@ window.updateFromSpreadsheet = function ({ nodes = [], members = [], nodeLoads =
 
     const state = { nodes: [], members: [], nodeLoads: [], memberLoads: [] };
 
+    const toInternalK = (uiK) => {
+        const v = Number(uiK);
+        if (!Number.isFinite(v)) return 0;
+        return v * 1000; // UI(kN/mm) -> 内部(kN/m)
+    };
+    const toInternalKr = (uiKr) => {
+        const v = Number(uiKr);
+        if (!Number.isFinite(v)) return 0;
+        return v / 1000; // UI(kNmm/rad) -> 内部(kN·m/rad)
+    };
+    const mapSpreadsheetConnToInternal = (connValue) => {
+        const v = String(connValue || '').trim().toLowerCase();
+        if (v.includes('spring')) return 'spring';
+        if (v.includes('pin')) return 'pinned';
+        return 'rigid';
+    };
+    const buildSpringFromSpreadsheet = (kx, ky, kr) => ({
+        Kx: toInternalK(kx),
+        Ky: toInternalK(ky),
+        Kr: toInternalKr(kr),
+        rigidKx: false,
+        rigidKy: false,
+        rigidKr: false,
+    });
+
     (nodes || []).forEach(n => {
         state.nodes.push({
             x: n.x ?? 0,
@@ -21538,6 +21999,17 @@ window.updateFromSpreadsheet = function ({ nodes = [], members = [], nodeLoads =
     (members || []).forEach(m => {
         const Jvalue = (m.J !== undefined && m.J !== null && String(m.J).trim() !== '') ? m.J : '';
         const IwValue = (m.Iw !== undefined && m.Iw !== null && String(m.Iw).trim() !== '') ? m.Iw : '';
+
+        const iConn = mapSpreadsheetConnToInternal(m.conn1);
+        const jConn = mapSpreadsheetConnToInternal(m.conn2);
+
+        const springI = (iConn === 'spring')
+            ? buildSpringFromSpreadsheet(m.spring_i_Kx, m.spring_i_Ky, m.spring_i_Kr)
+            : null;
+        const springJ = (jConn === 'spring')
+            ? buildSpringFromSpreadsheet(m.spring_j_Kx, m.spring_j_Ky, m.spring_j_Kr)
+            : null;
+
         state.members.push({
             i: m.node1 ?? 1,
             j: m.node2 ?? 2,
@@ -21551,8 +22023,10 @@ window.updateFromSpreadsheet = function ({ nodes = [], members = [], nodeLoads =
             Zy: m.Z ?? 410,
             I: m.I ?? 1840,
             Z: m.Z ?? 1230,
-            i_conn: (String(m.conn1).toLowerCase().includes('pin') ? 'pinned' : 'rigid'),
-            j_conn: (String(m.conn2).toLowerCase().includes('pin') ? 'pinned' : 'rigid'),
+            i_conn: iConn,
+            j_conn: jConn,
+            spring_i: springI,
+            spring_j: springJ,
         });
     });
 

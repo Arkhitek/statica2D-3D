@@ -318,12 +318,20 @@ Excelのような表形式でモデルデータを一括編集できる機能で
 ### ファイル構成
 ```
 プロジェクトルート/
-├── index.html              # メインアプリケーション
-├── frame_analyzer.js       # メインのJavaScriptファイル
-├── steel_selector.js       # 断面選択機能
-├── viewer_3d.js           # 3Dビューア機能
-├── style.css              # スタイルシート
-├── steel_data.js          # 鋼材データベース
+├── index.html              # 統合版(親) : 3D/2D切替 + 2Dをiframe埋め込み
+├── frame_analyzer.js       # 統合版(親) : 3D側のメインロジック
+├── style.css               # 共通スタイル（2Dのembed表示も含む）
+├── steel_data.js           # 共通: 鋼材データベース
+├── communication.js        # 共通: 断面選択ツール等との通信
+├── steel_selector.html     # 共通: 断面選択UI
+├── steel_selector.js       # 共通: 断面選択ロジック
+├── viewer_3d.html          # 共通: 3Dビューア
+├── viewer_3d.js            # 共通: 3Dビューアロジック
+├── spreadsheet_input.html  # 共通: スプレッドシート入力
+├── spreadsheet_input.js    # 共通: スプレッドシート入力ロジック
+├── 2D構造解析/
+│   ├── index.html          # 2Dアプリ（iframe埋め込み時は ?embed=1 ）
+│   └── frame_analyzer.js   # 2D側のメインロジック
 └── api/
     └── generate-model.js  # AI生成API
 ```

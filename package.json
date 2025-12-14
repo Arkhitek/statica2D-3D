@@ -1,0 +1,9 @@
+{
+  "name": "structural-analysis-integrated",
+  "private": true,
+  "version": "1.0.0",
+  "description": "3D構造解析＋2D構造解析統合版",
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  }
+}

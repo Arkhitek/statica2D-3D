@@ -1,8 +1,8 @@
-// ルート統合版から /api/generate-model を提供するための薄いラッパー。
-// 実装本体は 2D 側の既存ロジックをそのまま再利用する。
+// /api/generate-model を提供するための薄いラッパー。
+// 実装本体は api/generate-model-impl.mjs に分離している（ESM）。
 
 async function handler(req, res) {
-    const mod = await import('../2D構造解析/api/generate-model.js');
+    const mod = await import('./generate-model-impl.mjs');
     const inner = mod?.default;
     if (typeof inner !== 'function') {
         res.status(500).json({ error: 'AI handler is not available.' });
