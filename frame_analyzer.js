@@ -4346,7 +4346,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const izValue = row.cells[5]?.querySelector('input')?.value || 1840;
             const iyValue = row.cells[6]?.querySelector('input')?.value || 613;
-            const jValue = row.cells[7]?.querySelector('input')?.value || 235;
+            const jValue = row.cells[7]?.querySelector('input')?.value ?? '';
             const iwValue = row.cells[8]?.querySelector('input')?.value || '';
             const aValue = row.cells[9]?.querySelector('input')?.value || 2340;
             const zzValue = row.cells[10]?.querySelector('input')?.value || 1230;
@@ -4544,7 +4544,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const MEMBER_PROPERTY_DEFAULTS = Object.freeze({
             Iz: 1840,
             Iy: 613,
-            J: 235,
+            J: null,
             A: 2340,
             Zz: 1230,
             Zy: 410
@@ -4578,7 +4578,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     const iz_cm4 = pickMemberValue(m, ['Iz', 'iz', 'I'], MEMBER_PROPERTY_DEFAULTS.Iz);
                     const iy_cm4 = pickMemberValue(m, ['Iy', 'iy'], MEMBER_PROPERTY_DEFAULTS.Iy);
-                    const j_cm4 = pickMemberValue(m, ['J', 'j'], MEMBER_PROPERTY_DEFAULTS.J);
+                    const j_cm4 = pickMemberValue(m, ['J', 'j'], null);
                     const a_cm2 = pickMemberValue(m, ['A', 'a'], MEMBER_PROPERTY_DEFAULTS.A);
                     const zz_cm3 = pickMemberValue(m, ['Zz', 'Z', 'zz'], MEMBER_PROPERTY_DEFAULTS.Zz);
                     const zy_cm3 = pickMemberValue(m, ['Zy', 'zy'], MEMBER_PROPERTY_DEFAULTS.Zy);
@@ -4589,7 +4589,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     const memberJConn = m.j_conn || m.jc || 'rigid';
                     const Iz_m4 = getPositiveNumberValue(iz_cm4, MEMBER_PROPERTY_DEFAULTS.Iz) * 1e-8;
                     const Iy_m4 = getPositiveNumberValue(iy_cm4, MEMBER_PROPERTY_DEFAULTS.Iy) * 1e-8;
-                    const J_m4 = getPositiveNumberValue(j_cm4, MEMBER_PROPERTY_DEFAULTS.J) * 1e-8;
+                    const J_cm4 = getPositiveNumberValue(j_cm4, null);
+                    const J_m4 = (J_cm4 !== null) ? (J_cm4 * 1e-8) : '';
                     const A_m2 = getPositiveNumberValue(a_cm2, MEMBER_PROPERTY_DEFAULTS.A) * 1e-4;
                     const Zz_m3 = getPositiveNumberValue(zz_cm3, MEMBER_PROPERTY_DEFAULTS.Zz) * 1e-6;
                     const Zy_m3 = getPositiveNumberValue(zy_cm3, MEMBER_PROPERTY_DEFAULTS.Zy) * 1e-6;
@@ -13360,8 +13361,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
 
         if (izInput) izInput.value = newMemberDefaults.Iz || newMemberDefaults.I || 1840;
         if (iyInput) iyInput.value = newMemberDefaults.Iy || 613;
-        if (jInput) jInput.value = newMemberDefaults.J || 235;
-        if (iwInput) iwInput.value = newMemberDefaults.Iw || '';
+        if (jInput) jInput.value = (newMemberDefaults.J ?? '');
+        if (iwInput) iwInput.value = (newMemberDefaults.Iw ?? '');
         if (aInput) aInput.value = newMemberDefaults.A || 2340;
         if (zzInput) zzInput.value = newMemberDefaults.Zz || newMemberDefaults.Z || 1230;
         if (zyInput) zyInput.value = newMemberDefaults.Zy || 410;
@@ -13899,7 +13900,9 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     if (firstMemberNode !== clickedNodeIndex) {
                         const Iz_m4 = parseFloat(newMemberDefaults.Iz || newMemberDefaults.I || 1840)*1e-8;
                         const Iy_m4 = parseFloat(newMemberDefaults.Iy || 613)*1e-8;
-                        const J_m4 = parseFloat(newMemberDefaults.J || 235)*1e-8;
+                        const J_raw = (newMemberDefaults.J ?? '');
+                        const J_num = parseFloat(J_raw);
+                        const J_m4 = Number.isFinite(J_num) ? (J_num * 1e-8) : 0;
                         const A_m2 = parseFloat(newMemberDefaults.A)*1e-4;
                         const Zz_m3 = parseFloat(newMemberDefaults.Zz || newMemberDefaults.Z || 1230)*1e-6;
                         const Zy_m3 = parseFloat(newMemberDefaults.Zy || 410)*1e-6;
@@ -17680,7 +17683,9 @@ const loadPreset = (index) => {
                 if (!existingMembers.has(`${i}-${j}`)) {
                     const Iz_m4 = parseFloat(newMemberDefaults.Iz || newMemberDefaults.I || 1840) * 1e-8;
                     const Iy_m4 = parseFloat(newMemberDefaults.Iy || 613) * 1e-8;
-                    const J_m4 = parseFloat(newMemberDefaults.J || 235) * 1e-8;
+                    const J_raw = (newMemberDefaults.J ?? '');
+                    const J_num = parseFloat(J_raw);
+                    const J_m4 = Number.isFinite(J_num) ? (J_num * 1e-8) : 0;
                     const A_m2 = parseFloat(newMemberDefaults.A) * 1e-4;
                     const Zz_m3 = parseFloat(newMemberDefaults.Zz || newMemberDefaults.Z || 1230) * 1e-6;
                     const Zy_m3 = parseFloat(newMemberDefaults.Zy || 410) * 1e-6;
@@ -20610,7 +20615,7 @@ window.addMemberProgrammatically = function(nodeI, nodeJ) {
             F: '235',
             Iz: 1840,
             Iy: 613,
-            J: 235,
+            J: '',
             Iw: '',
             A: 2340,
             Zz: 1230,
@@ -20626,7 +20631,12 @@ window.addMemberProgrammatically = function(nodeI, nodeJ) {
         // 断面諸量を単位変換
         const Iz_m4 = parseFloat(defaults.Iz || defaults.I || 1840) * 1e-8;
         const Iy_m4 = parseFloat(defaults.Iy || 613) * 1e-8;
-        const J_m4 = parseFloat(defaults.J || 235) * 1e-8;
+        const J_m4 = (() => {
+            const raw = defaults.J;
+            if (raw === '' || raw === null || raw === undefined) return '';
+            const n = parseFloat(raw);
+            return Number.isFinite(n) ? (n * 1e-8) : '';
+        })();
         const Iw_m6 = (() => {
             const raw = defaults.Iw;
             if (raw === '' || raw === null || raw === undefined) return '';
@@ -21020,7 +21030,7 @@ function buildStateFromAiModel(modelData) {
         const j = m?.j ?? m?.node2 ?? m?.n2 ?? 2;
         const Iz = m?.Iz ?? m?.I ?? 1840;
         const Iy = m?.Iy ?? m?.I ?? Iz;
-        const J = m?.J ?? 235;
+        const J = (m?.J !== undefined && m?.J !== null && String(m?.J).trim() !== '') ? m.J : '';
         const A = m?.A ?? 2340;
         const Zz = m?.Zz ?? m?.Z ?? 1230;
         const Zy = m?.Zy ?? m?.Z ?? Zz;
@@ -21478,6 +21488,8 @@ window.getSpreadsheetData = function () {
         A: m.A,
         Z: m.Zz ?? m.Z,
         i: m.ix || '',
+        J: m.J ?? '',
+        Iw: m.Iw ?? '',
         K: '',
         density: '',
         name: m.sectionLabel || '',
@@ -21524,13 +21536,16 @@ window.updateFromSpreadsheet = function ({ nodes = [], members = [], nodeLoads =
     });
 
     (members || []).forEach(m => {
+        const Jvalue = (m.J !== undefined && m.J !== null && String(m.J).trim() !== '') ? m.J : '';
+        const IwValue = (m.Iw !== undefined && m.Iw !== null && String(m.Iw).trim() !== '') ? m.Iw : '';
         state.members.push({
             i: m.node1 ?? 1,
             j: m.node2 ?? 2,
             E: m.E ?? '205000',
             Iz: m.I ?? 1840,
             Iy: m.I ?? 613,
-            J: 235,
+            J: Jvalue,
+            Iw: IwValue,
             A: m.A ?? 2340,
             Zz: m.Z ?? 1230,
             Zy: m.Z ?? 410,

@@ -5933,8 +5933,34 @@ document.addEventListener('DOMContentLoaded', () => {
             // dataset は基本的に「cm系」(Ix/Iy/J: cm^4, Iw: cm^6) を保持する前提
             const Ix_m4 = (row.dataset.ixMom !== undefined && row.dataset.ixMom !== '') ? (parseFloat(row.dataset.ixMom) * 1e-8) : undefined; // m^4
             const Iy_m4 = (row.dataset.iyMom !== undefined && row.dataset.iyMom !== '') ? (parseFloat(row.dataset.iyMom) * 1e-8) : undefined; // m^4
-            const J_m4 = (row.dataset.j !== undefined && row.dataset.j !== '') ? (parseFloat(row.dataset.j) * 1e-8) : undefined; // m^4
-            const Iw_m6 = (row.dataset.iw !== undefined && row.dataset.iw !== '') ? (parseFloat(row.dataset.iw) * 1e-12) : undefined; // m^6
+
+            let J_m4 = undefined;
+            let Iw_m6 = undefined;
+            try {
+                const jInput = row.querySelector('.section-J-input');
+                const iwInput = row.querySelector('.section-Iw-input');
+                if (jInput && String(jInput.value).trim() !== '') {
+                    const v = parseFloat(jInput.value);
+                    if (Number.isFinite(v)) {
+                        J_m4 = v * 1e-8; // cm^4 -> m^4
+                        row.dataset.j = jInput.value;
+                    }
+                }
+                if (iwInput && String(iwInput.value).trim() !== '') {
+                    const v = parseFloat(iwInput.value);
+                    if (Number.isFinite(v)) {
+                        Iw_m6 = v * 1e-12; // cm^6 -> m^6
+                        row.dataset.iw = iwInput.value;
+                    }
+                }
+            } catch (e) { /* ignore */ }
+
+            if (J_m4 === undefined) {
+                J_m4 = (row.dataset.j !== undefined && row.dataset.j !== '') ? (parseFloat(row.dataset.j) * 1e-8) : undefined; // m^4
+            }
+            if (Iw_m6 === undefined) {
+                Iw_m6 = (row.dataset.iw !== undefined && row.dataset.iw !== '') ? (parseFloat(row.dataset.iw) * 1e-12) : undefined; // m^6
+            }
             // 断面2次半径 i の取り扱い: UI の .radius-i-input を優先し、なければ dataset の ix/iy、
             // それでもなければ I/A から推定する。内部では ix/iy は cm 単位で一時保持し、後で m に変換する。
             let ix = parseFloat(row.dataset.ix); // cm単位
@@ -13048,7 +13074,7 @@ const createEInputHTML = (idPrefix, currentE = '205000') => {
         return html;
     };
 
-    const memberRowHTML = (i, j, E = '205000', F='235', I = 1.84e-5, A = 2.34e-3, Z = 1.23e-3, i_rad = '', i_conn = 'rigid', j_conn = 'rigid', sectionName = '', sectionAxis = '', bucklingK = '', forceCustomF = false) => {
+    const memberRowHTML = (i, j, E = '205000', F='235', I = 1.84e-5, A = 2.34e-3, Z = 1.23e-3, i_rad = '', i_conn = 'rigid', j_conn = 'rigid', sectionName = '', sectionAxis = '', bucklingK = '', forceCustomF = false, J_cm4 = '', Iw_cm6 = '') => {
         console.log(`memberRowHTML: F=${F}, forceCustomF=${forceCustomF}`);
         // 引数に bucklingK を追加（デフォルトは空）
         const baseColumns = [
@@ -13077,6 +13103,12 @@ const createEInputHTML = (idPrefix, currentE = '205000') => {
                 <div><span>低減係数：</span><input type="number" class="reduction-factor-input section-i-factor" value="1.0" step="0.01" title="低減係数" placeholder="低減係数"></div>
                 <div class="reduced-label" style="display:none;">低減後：<span class="reduced-value"></span></div>
                 <span class="auto-label" style="display:none;">(自動)</span>
+            </div>`,
+            `<div class="cell-input-wrapper">
+                <input type="number" class="section-J-input col-section" value="${(J_cm4 !== undefined && J_cm4 !== null && String(J_cm4).trim() !== '') ? J_cm4 : ''}" step="any" title="ねじり定数 J (cm⁴)">
+            </div>`,
+            `<div class="cell-input-wrapper">
+                <input type="number" class="section-Iw-input col-section" value="${(Iw_cm6 !== undefined && Iw_cm6 !== null && String(Iw_cm6).trim() !== '') ? Iw_cm6 : ''}" step="any" title="曲げねじり定数 Iw (cm⁶)">
             </div>`
         ];
 
@@ -16010,6 +16042,14 @@ const loadPreset = (index) => {
                     const zEl = row.cells[7].querySelector('.section-Z-input');
                     if (zEl) zEl.value = props.Z;
                 }
+                if (props.J !== undefined) {
+                    const jEl = row.querySelector('.section-J-input');
+                    if (jEl) jEl.value = props.J;
+                }
+                if (props.Iw !== undefined) {
+                    const iwEl = row.querySelector('.section-Iw-input');
+                    if (iwEl) iwEl.value = props.Iw;
+                }
                 if (typeof window.updateReductionDisplays === 'function') {
                     window.updateReductionDisplays(row);
                 }
@@ -16027,8 +16067,10 @@ const loadPreset = (index) => {
             // data-ix-mom / data-iy-mom / data-j / data-iw
             if (props.Ix) row.dataset.ixMom = props.Ix;
             if (props.Iy) row.dataset.iyMom = props.Iy;
-            if (props.J) row.dataset.j = props.J;
-            if (props.Iw) row.dataset.iw = props.Iw;
+            if (props.J !== undefined && props.J !== null && props.J !== '') row.dataset.j = props.J;
+            else delete row.dataset.j;
+            if (props.Iw !== undefined && props.Iw !== null && props.Iw !== '') row.dataset.iw = props.Iw;
+            else delete row.dataset.iw;
 
             // sectionInfo がある場合は確実に dataset に保存
             if (props.sectionInfo) {
@@ -22531,11 +22573,13 @@ window.getSpreadsheetData = () => {
             F = fInput.value;
         }
         
-        // I, A, Z, i (Cells 5-8)
-        const I = cells[5].querySelector('input').value;
-        const A = cells[6].querySelector('input').value;
-        const Z = cells[7].querySelector('input').value;
-        const i_rad = cells[8].querySelector('input').value;
+        // I, A, Z, i, J, Iw
+        const I = row.querySelector('.section-I-input')?.value || '';
+        const A = row.querySelector('.section-A-input')?.value || '';
+        const Z = row.querySelector('.section-Z-input')?.value || '';
+        const i_rad = row.querySelector('.radius-i-input')?.value || '';
+        const J = row.querySelector('.section-J-input')?.value || '';
+        const Iw = row.querySelector('.section-Iw-input')?.value || '';
         
         // K (Buckling Coefficient) - Find by class to handle variable column positions (density)
         const kInput = row.querySelector('.buckling-k-input');
@@ -22574,7 +22618,7 @@ window.getSpreadsheetData = () => {
         const spring_j = readSpring(connCells[1]);
         
         return {
-            node1, node2, E, F, I, A, Z, i: i_rad, K, density, name, axis,
+            node1, node2, E, F, I, A, Z, i: i_rad, J, Iw, K, density, name, axis,
             conn1: conn1,
             conn2: conn2,
             spring_i_Kx: spring_i.Kx,
@@ -22694,13 +22738,25 @@ window.updateFromSpreadsheet = (data) => {
                 conn1, conn2, 
                 m.name, m.axis, 
                 m.K,
-                forceCustomF
+                forceCustomF,
+                m.J,
+                m.Iw
             );
             
             // Prepend '#' column
             cells.unshift('#');
             
             const newRow = window.addRow(window.elements.membersTable, cells, false);
+
+            // dataset にも保存（既存コードは dataset 参照の箇所があるため）
+            if (newRow) {
+                try {
+                    if (m.J !== undefined && m.J !== null && String(m.J).trim() !== '') newRow.dataset.j = String(m.J).trim();
+                    if (m.Iw !== undefined && m.Iw !== null && String(m.Iw).trim() !== '') newRow.dataset.iw = String(m.Iw).trim();
+                } catch (e) {
+                    console.warn('updateFromSpreadsheet: dataset(j/iw) set failed', e);
+                }
+            }
             
             // Update density if present
             if (m.density && newRow) {
@@ -22867,16 +22923,15 @@ window.updateMemberAutoValues = () => {
                     i_conn = selects[0].value;
                     j_conn = selects[1].value;
                 } else {
-                    // ��C���f�b�N�X���琄��i���x��̗L���ŕς��j
-                    const cellCount = row.cells.length;
-                    const hasDensity = cellCount >= 13; // ���x�񂪂���ꍇ
-                    const iConnIdx = hasDensity ? 10 : 9;
-                    const jConnIdx = hasDensity ? 11 : 10;
-                    
-                    const iSel = row.cells[iConnIdx]?.querySelector('select');
-                    const jSel = row.cells[jConnIdx]?.querySelector('select');
-                    if (iSel) i_conn = iSel.value;
-                    if (jSel) j_conn = jSel.value;
+                    // 列増減に強い: 後ろから .conn-select を探索
+                    let found = 0;
+                    for (let ci = row.cells.length - 1; ci >= 0; ci--) {
+                        const sel = row.cells[ci]?.querySelector('select.conn-select');
+                        if (!sel) continue;
+                        found++;
+                        if (found === 1) j_conn = sel.value;
+                        if (found === 2) { i_conn = sel.value; break; }
+                    }
                 }
 
                 // K�̐���

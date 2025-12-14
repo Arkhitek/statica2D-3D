@@ -76,6 +76,7 @@
             safeVal(m.node1), safeVal(m.node2), 
             safeVal(m.E), safeVal(m.F), 
             safeVal(m.I), safeVal(m.A), safeVal(m.Z), safeVal(m.i), 
+            safeVal(m.J), safeVal(m.Iw),
             safeVal(m.K), safeVal(m.density), 
             safeVal(m.name), safeVal(m.axis), 
             conn1Display, conn2Display,
@@ -83,7 +84,7 @@
             safeVal(m.spring_j_Kx), safeVal(m.spring_j_Ky), safeVal(m.spring_j_Kr)
         ];
     });
-    while(membersData.length < 50) membersData.push(['', '', '', '', '', '', '', '', '', '', '', '', 'Rigid', 'Rigid', '', '', '', '', '', '']);
+    while(membersData.length < 50) membersData.push(['', '', '', '', '', '', '', '', '', '', '', '', '', 'Rigid', 'Rigid', '', '', '', '', '', '', '']);
 
     const nodeLoadsData = initialNodeLoads.map(l => [
         safeVal(l.node), safeVal(l.px), safeVal(l.py), safeVal(l.mz)
@@ -134,8 +135,10 @@
         try {
             membersSheet = new Handsontable(membersContainer, {
                 data: membersData,
-                colHeaders: ['始点No', '終点No', 'E (N/mm²)', 'F (N/mm²)', 'I (cm⁴)', 'A (cm²)', 'Z (cm³)', 'i (cm)', 'K', '密度 (kg/m³)', '断面名称', '軸方向', '始端接合', '終端接合', '始端Kx (kN/mm)', '始端Ky (kN/mm)', '始端Kr (kNmm/rad)', '終端Kx (kN/mm)', '終端Ky (kN/mm)', '終端Kr (kNmm/rad)'],
+                colHeaders: ['始点No', '終点No', 'E (N/mm²)', 'F (N/mm²)', 'I (cm⁴)', 'A (cm²)', 'Z (cm³)', 'i (cm)', 'J (cm⁴)', 'Iw (cm⁶)', 'K', '密度 (kg/m³)', '断面名称', '軸方向', '始端接合', '終端接合', '始端Kx (kN/mm)', '始端Ky (kN/mm)', '始端Kr (kNmm/rad)', '終端Kx (kN/mm)', '終端Ky (kN/mm)', '終端Kr (kNmm/rad)'],
                 columns: [
+                    { type: 'text' },
+                    { type: 'text' },
                     { type: 'text' },
                     { type: 'text' },
                     { type: 'text' },
@@ -157,7 +160,7 @@
                     { type: 'text' },
                     { type: 'text' },
                 ],
-                colWidths: [60, 60, 80, 80, 80, 80, 80, 60, 50, 80, 100, 60, 80, 80, 90, 90, 100, 90, 90, 100],
+                colWidths: [60, 60, 80, 80, 80, 80, 80, 60, 80, 90, 50, 80, 100, 60, 80, 80, 90, 90, 100, 90, 90, 100],
                 rowHeaders: true,
                 width: '100%',
                 height: 'calc(100vh - 250px)',
@@ -409,22 +412,24 @@
                 if ((n1 === '' || n1 === null) && (n2 === '' || n2 === null)) return;
                 
                 // Get connection types and ensure proper format
-                let conn1 = row[12] || 'Rigid';
-                let conn2 = row[13] || 'Rigid';
+                // 列順: 0:n1 1:n2 2:E 3:F 4:I 5:A 6:Z 7:i 8:J 9:Iw 10:K 11:density 12:name 13:axis 14:conn1 15:conn2 16-21:springs
+                let conn1 = row[14] || 'Rigid';
+                let conn2 = row[15] || 'Rigid';
                 
                 // Convert 'Pin' to 'Pinned' for internal use
-                if (conn1.toLowerCase() === 'pin') conn1 = 'Pinned';
-                if (conn2.toLowerCase() === 'pin') conn2 = 'Pinned';
+                if (`${conn1}`.toLowerCase() === 'pin') conn1 = 'Pinned';
+                if (`${conn2}`.toLowerCase() === 'pin') conn2 = 'Pinned';
                 
                 members.push({
                     node1: n1, node2: n2, 
                     E: row[2], F: row[3], 
                     I: row[4], A: row[5], Z: row[6], i: row[7], 
-                    K: row[8], density: row[9], 
-                    name: row[10], axis: row[11], 
+                    J: row[8], Iw: row[9],
+                    K: row[10], density: row[11], 
+                    name: row[12], axis: row[13], 
                     conn1: conn1, conn2: conn2,
-                    spring_i_Kx: row[14], spring_i_Ky: row[15], spring_i_Kr: row[16],
-                    spring_j_Kx: row[17], spring_j_Ky: row[18], spring_j_Kr: row[19]
+                    spring_i_Kx: row[16], spring_i_Ky: row[17], spring_i_Kr: row[18],
+                    spring_j_Kx: row[19], spring_j_Ky: row[20], spring_j_Kr: row[21]
                 });
             });
 

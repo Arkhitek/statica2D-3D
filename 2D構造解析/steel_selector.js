@@ -335,12 +335,26 @@ const findRowValueByKeys = (headers, normalizedHeaders, rowData, ...keys) => {
     const ensureNormalizedHeader = (index) => normalizedHeaders?.[index] ?? normalizeHeaderKey(headers[index]);
 
     if (longTokens.length > 0) {
+        let bestIndex = null;
+        let bestScore = -1;
+
         for (let index = 0; index < headers.length; index++) {
             const normalizedHeader = ensureNormalizedHeader(index);
             if (!normalizedHeader) continue;
-            if (longTokens.some(token => normalizedHeader.includes(token))) {
-                return rowData[index];
+
+            for (const token of longTokens) {
+                if (normalizedHeader.includes(token)) {
+                    const score = token.length;
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestIndex = index;
+                    }
+                }
             }
+        }
+
+        if (bestIndex !== null) {
+            return rowData[bestIndex];
         }
     }
 
@@ -1646,6 +1660,21 @@ const calculateLabelOptions = (maxDim, scale = 1) => {
                 calculatedProps.ix = value;
                 calculatedProps.iy = value;
             }
+
+            const isIwKey = normalizedKey.includes('曲げねじり定数')
+                || normalizedKey.includes('warping')
+                || normalizedKey.includes('iw (cm');
+            const isJKey = (normalizedKey.includes('ねじり定数')
+                || normalizedKey.includes(' torsion')
+                || normalizedKey.includes('j (cm'))
+                && !isIwKey;
+
+            // NOTE: 「曲げねじり定数 Iw」が「ねじり定数」を含むため、Iw判定を優先する
+            if (isIwKey) {
+                calculatedProps.Iw = value;
+            } else if (isJKey) {
+                calculatedProps.J = value;
+            }
         }
 
         if (calculatedProps.Ix !== undefined && calculatedProps.Iy === undefined) {
@@ -1664,6 +1693,8 @@ const calculateLabelOptions = (maxDim, scale = 1) => {
         props.A = calculatedProps.A;
         props.Ix = calculatedProps.Ix;
         props.Iy = calculatedProps.Iy;
+        props.J = calculatedProps.J;
+        props.Iw = calculatedProps.Iw;
         props.I = (selectedAxis === 'y' && calculatedProps.Iy !== undefined) ? calculatedProps.Iy : calculatedProps.Ix;
         props.ix = calculatedProps.ix;
         props.iy = calculatedProps.iy;
@@ -1966,7 +1997,32 @@ const calculateLabelOptions = (maxDim, scale = 1) => {
         const dimsCm = Object.fromEntries(Object.entries(dims).map(([k, v]) => [k, v / 10]));
         try {
             switch (typeKey) {
-                case 'hkatakou_hiro': case 'hkatakou_naka': case 'hkatakou_hoso': case 'ikatakou': case 'keiryouhkatakou': case 'keiryourippuhkatakou': { const { H, B, t1, t2 } = dimsCm; if (!H || !B || !t1 || !t2 || H <= 2 * t2 || B <= t1) return {}; const A_h = 2 * B * t2 + (H - 2 * t2) * t1; const Ix_h = (B * H**3 - (B - t1) * (H - 2 * t2)**3) / 12; const Iy_h = (2 * t2 * B**3 + (H - 2 * t2) * t1**3) / 12; Object.assign(results, { '断面積 (cm²)': A_h, '断面2次モーメント Ix (cm⁴)': Ix_h, '断面2次モーメント Iy (cm⁴)': Iy_h, '断面2次半径 ix (cm)': Math.sqrt(Ix_h / A_h), '断面2次半径 iy (cm)': Math.sqrt(Iy_h / A_h), '断面係数 Zx (cm³)': Ix_h / (H / 2), '断面係数 Zy (cm³)': Iy_h / (B / 2) }); break; } 
+                case 'hkatakou_hiro': case 'hkatakou_naka': case 'hkatakou_hoso': case 'ikatakou': case 'keiryouhkatakou': case 'keiryourippuhkatakou': {
+                    const { H, B, t1, t2 } = dimsCm;
+                    if (!H || !B || !t1 || !t2 || H <= 2 * t2 || B <= t1) return {};
+
+                    const A_h = 2 * B * t2 + (H - 2 * t2) * t1;
+                    const Ix_h = (B * H**3 - (B - t1) * (H - 2 * t2)**3) / 12;
+                    const Iy_h = (2 * t2 * B**3 + (H - 2 * t2) * t1**3) / 12;
+
+                    // 薄肉開断面の近似（単位: cm系）
+                    const J = (2 * (t2 * B**3) + (t1 * (H - 2 * t2)**3)) / 3;
+                    const h0 = H - t2;
+                    const Iw = (B**3 * t2 * h0**2) / 24;
+
+                    Object.assign(results, {
+                        '断面積 (cm²)': A_h,
+                        '断面2次モーメント Ix (cm⁴)': Ix_h,
+                        '断面2次モーメント Iy (cm⁴)': Iy_h,
+                        '断面2次半径 ix (cm)': Math.sqrt(Ix_h / A_h),
+                        '断面2次半径 iy (cm)': Math.sqrt(Iy_h / A_h),
+                        '断面係数 Zx (cm³)': Ix_h / (H / 2),
+                        '断面係数 Zy (cm³)': Iy_h / (B / 2),
+                        'ねじり定数 J (cm⁴)': J,
+                        '曲げねじり定数 Iw (cm⁶)': Iw
+                    });
+                    break;
+                }
                 case 'mizogatakou': case 'keimizogatakou': case 'rippumizokatakou': { 
                     let H, B_flange, t_web, t_flange, C = 0;
                     
@@ -2037,13 +2093,111 @@ const calculateLabelOptions = (maxDim, scale = 1) => {
                         '断面係数 Zy (フランジ先端側, cm³)': Iy/(B_flange - global_Cy), 
                         '断面係数 Zy (ウェブ側, cm³)': Iy/global_Cy
                     }); 
+
+                    // 薄肉開断面の近似（単位: cm系）
+                    const J = (
+                        (t_web * Math.pow(H - 2 * t_flange, 3)) +
+                        2 * (t_flange * Math.pow(B_flange, 3)) +
+                        (hasLips ? 2 * (t_flange * Math.pow(lip_h - t_flange, 3)) : 0)
+                    ) / 3;
+                    const h0 = H - t_flange;
+                    const Iw = (Math.pow(B_flange, 3) * t_flange * Math.pow(h0, 2)) / 24;
+                    results['ねじり定数 J (cm⁴)'] = J;
+                    results['曲げねじり定数 Iw (cm⁶)'] = Iw;
+
                     break; 
                 } 
                 case 'touhenyamakatakou': case 'futouhenyamagata': { const sideA = dimsCm.A, sideB = (typeKey==='touhenyamakatakou')?dimsCm.A:dimsCm.B, t = dimsCm.t; if(!sideA||!sideB||!t||sideA<t||sideB<t) return {}; const r1_A=sideA*t, r2_A=(sideB-t)*t, total_A=r1_A+r2_A; const r1_Cx=t/2, r1_Cy=sideA/2, r2_Cx=t+(sideB-t)/2, r2_Cy=t/2; const global_Cx=(r1_A*r1_Cx+r2_A*r2_Cx)/total_A, global_Cy=(r1_A*r1_Cy+r2_A*r2_Cy)/total_A; const Ix1=t*sideA**3/12+r1_A*(r1_Cy-global_Cy)**2, Iy1=sideA*t**3/12+r1_A*(r1_Cx-global_Cx)**2; const Ixy1=r1_A*(r1_Cx-global_Cx)*(r1_Cy-global_Cy); const Ix2=(sideB-t)*t**3/12+r2_A*(r2_Cy-global_Cy)**2, Iy2=t*(sideB-t)**3/12+r2_A*(r2_Cx-global_Cx)**2; const Ixy2=r2_A*(r2_Cx-global_Cx)*(r2_Cy-global_Cy); const Ix=Ix1+Ix2, Iy=Iy1+Iy2, Ixy=Ixy1+Ixy2; const I_avg=(Ix+Iy)/2, R=Math.sqrt(((Ix-Iy)/2)**2+Ixy**2); const Iu=I_avg+R, Iv=I_avg-R; const alpha=(Ix===Iy)?0:Math.atan2(-2*Ixy,Ix-Iy)/2; const Zx_upper=Ix/(sideA-global_Cy), Zx_lower=Ix/global_Cy, Zy_right=Iy/(sideB-global_Cx), Zy_left=Iy/global_Cx; Object.assign(results, { '断面積 (cm²)':total_A, '図心距離 Cx (cm)':global_Cx, '図心距離 Cy (cm)':global_Cy, '断面2次モーメント Ix (cm⁴)':Ix, '断面2次モーメント Iy (cm⁴)':Iy, '断面係数 Zx (上縁, cm³)':Zx_upper, '断面係数 Zx (下縁, cm³)':Zx_lower, '断面係数 Zy (右縁, cm³)':Zy_right, '断面係数 Zy (左縁, cm³)':Zy_left, '断面2次半径 ix (cm)':Math.sqrt(Ix/total_A), '断面2次半径 iy (cm)':Math.sqrt(Iy/total_A), '主軸の傾き α (deg)':alpha*180/Math.PI, '主断面2次モーメント Iu(最大) (cm⁴)':Iu, '主断面2次モーメント Iv(最小) (cm⁴)':Iv, '主断面2次半径 iu(最大) (cm)':Math.sqrt(Iu/total_A), '主断面2次半径 iv(最小) (cm)':Math.sqrt(Iv/total_A) }); break; } 
-                case 'seihoukei': case 'tyouhoukei': { const A_dim = dimsCm.A, B_dim = (typeKey==='seihoukei')?dimsCm.A:dimsCm.B, t=dimsCm.t; if(!A_dim||!B_dim||!t||A_dim<=2*t||B_dim<=2*t) return {}; const A=A_dim*B_dim-(A_dim-2*t)*(B_dim-2*t); const Ix=(B_dim*A_dim**3-(B_dim-2*t)*(A_dim-2*t)**3)/12, Iy=(A_dim*B_dim**3-(A_dim-2*t)*(B_dim-2*t)**3)/12; Object.assign(results, {'断面積 (cm²)':A, '断面2次モーメント Ix (cm⁴)':Ix, '断面2次モーメント Iy (cm⁴)':Iy, '断面2次半径 ix (cm)':Math.sqrt(Ix/A), '断面2次半径 iy (cm)':Math.sqrt(Iy/A), '断面係数 Zx (cm³)':Ix/(A_dim/2), '断面係数 Zy (cm³)':Iy/(B_dim/2) }); break; } 
-                case 'koukan': { const { D,t } = dimsCm; if(!D||!t||D<=2*t) return {}; const d=D-2*t, A=Math.PI/4*(D**2-d**2), I=Math.PI/64*(D**4-d**4); Object.assign(results, { '断面積 (cm²)':A, '断面2次モーメント I (cm⁴)':I, '断面2次半径 i (cm)':Math.sqrt(I/A), '断面係数 Z (cm³)':I/(D/2) }); break; } 
-                case '矩形': { const { H,B } = dimsCm; if(!H||!B) return {}; const A=B*H, Ix=(B*H**3)/12, Iy=(H*B**3)/12; Object.assign(results, {'断面積 (cm²)':A, '断面2次モーメント Ix (cm⁴)':Ix, '断面2次モーメント Iy (cm⁴)':Iy, '断面2次半径 ix (cm)':Math.sqrt(Ix/A), '断面2次半径 iy (cm)':Math.sqrt(Iy/A), '断面係数 Zx (cm³)':Ix/(H/2), '断面係数 Zy (cm³)':Iy/(B/2) }); break; } 
-                case '円形': { const { D } = dimsCm; if(!D) return {}; const R=D/2, A=Math.PI*R**2, I=(Math.PI*D**4)/64; Object.assign(results, {'断面積 (cm²)':A, '断面2次モーメント I (cm⁴)':I, '断面2次半径 i (cm)':R/2, '断面係数 Z (cm³)':I/R }); break; } 
+                case 'seihoukei': case 'tyouhoukei': {
+                    const A_dim = dimsCm.A;
+                    const B_dim = (typeKey === 'seihoukei') ? dimsCm.A : dimsCm.B;
+                    const t = dimsCm.t;
+                    if (!A_dim || !B_dim || !t || A_dim <= 2 * t || B_dim <= 2 * t) return {};
+
+                    const A = A_dim * B_dim - (A_dim - 2 * t) * (B_dim - 2 * t);
+                    const Ix = (B_dim * A_dim**3 - (B_dim - 2 * t) * (A_dim - 2 * t)**3) / 12;
+                    const Iy = (A_dim * B_dim**3 - (A_dim - 2 * t) * (B_dim - 2 * t)**3) / 12;
+
+                    // 閉断面薄肉近似（Bredt）
+                    const a_m = A_dim - t;
+                    const b_m = B_dim - t;
+                    const A_m = a_m * b_m;
+                    const denom = 2 * (a_m / t + b_m / t);
+                    const J = denom > 0 ? (4 * A_m**2) / denom : 0;
+
+                    Object.assign(results, {
+                        '断面積 (cm²)': A,
+                        '断面2次モーメント Ix (cm⁴)': Ix,
+                        '断面2次モーメント Iy (cm⁴)': Iy,
+                        '断面2次半径 ix (cm)': Math.sqrt(Ix / A),
+                        '断面2次半径 iy (cm)': Math.sqrt(Iy / A),
+                        '断面係数 Zx (cm³)': Ix / (A_dim / 2),
+                        '断面係数 Zy (cm³)': Iy / (B_dim / 2),
+                        'ねじり定数 J (cm⁴)': J,
+                        '曲げねじり定数 Iw (cm⁶)': 0
+                    });
+                    break;
+                }
+                case 'koukan': {
+                    const { D, t } = dimsCm;
+                    if (!D || !t || D <= 2 * t) return {};
+                    const d = D - 2 * t;
+                    const A = Math.PI / 4 * (D**2 - d**2);
+                    const I = Math.PI / 64 * (D**4 - d**4);
+                    const J = Math.PI / 32 * (D**4 - d**4);
+                    Object.assign(results, {
+                        '断面積 (cm²)': A,
+                        '断面2次モーメント I (cm⁴)': I,
+                        '断面2次半径 i (cm)': Math.sqrt(I / A),
+                        '断面係数 Z (cm³)': I / (D / 2),
+                        'ねじり定数 J (cm⁴)': J,
+                        '曲げねじり定数 Iw (cm⁶)': 0
+                    });
+                    break;
+                }
+                case '矩形': {
+                    const { H, B } = dimsCm;
+                    if (!H || !B) return {};
+                    const A = B * H;
+                    const Ix = (B * H**3) / 12;
+                    const Iy = (H * B**3) / 12;
+
+                    // 矩形のねじり定数（近似）
+                    const a = Math.max(B, H);
+                    const b = Math.min(B, H);
+                    const ratio = b / a;
+                    const J = (a * b**3 / 3) * (1 - 0.63 * ratio + 0.052 * ratio**5);
+
+                    Object.assign(results, {
+                        '断面積 (cm²)': A,
+                        '断面2次モーメント Ix (cm⁴)': Ix,
+                        '断面2次モーメント Iy (cm⁴)': Iy,
+                        '断面2次半径 ix (cm)': Math.sqrt(Ix / A),
+                        '断面2次半径 iy (cm)': Math.sqrt(Iy / A),
+                        '断面係数 Zx (cm³)': Ix / (H / 2),
+                        '断面係数 Zy (cm³)': Iy / (B / 2),
+                        'ねじり定数 J (cm⁴)': J,
+                        '曲げねじり定数 Iw (cm⁶)': 0
+                    });
+                    break;
+                }
+                case '円形': {
+                    const { D } = dimsCm;
+                    if (!D) return {};
+                    const R = D / 2;
+                    const A = Math.PI * R**2;
+                    const I = (Math.PI * D**4) / 64;
+                    const J = (Math.PI * D**4) / 32;
+                    Object.assign(results, {
+                        '断面積 (cm²)': A,
+                        '断面2次モーメント I (cm⁴)': I,
+                        '断面2次半径 i (cm)': R / 2,
+                        '断面係数 Z (cm³)': I / R,
+                        'ねじり定数 J (cm⁴)': J,
+                        '曲げねじり定数 Iw (cm⁶)': 0
+                    });
+                    break;
+                }
             }
         } catch(e) { console.error("Calculation Error:", e); return {}; }
         return results;
