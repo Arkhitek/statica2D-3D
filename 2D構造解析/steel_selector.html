@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JIS規格鋼材 性能値検索＆任意断面の性能値算出</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>JIS規格鋼材 性能値検索＆任意断面の性能値算出</h1>
+        <div class="description">
+            <p>このプログラムは、JIS規格に準拠した各種鋼材の断面性能値を検索し、任意の寸法での断面性能値を算出することができます。</p>
+            <p>下記より鋼材の種類を選択してください。選択後、該当する鋼材の規格表と断面図が表示されます。</p>
+        </div>
+
+        <div class="selector-group">
+            <label for="steel-type-select">鋼材の種類を選択</label>
+            <select id="steel-type-select">
+                <option value="">▼ 鋼材の種類を選択してください</option>
+                <optgroup label="JIS G 3192 熱間圧延形鋼">
+                    <option value="hkatakou_hiro">H形鋼（広幅）</option>
+                    <option value="hkatakou_naka">H形鋼（中幅）</option>
+                    <option value="hkatakou_hoso">H形鋼（細幅）</option>
+                    <option value="ikatakou">I形鋼</option>
+                    <option value="mizogatakou">みぞ形鋼</option>
+                    <option value="touhenyamakatakou">等辺山形鋼</option>
+                    <option value="futouhenyamagata">不等辺山形鋼</option>
+                </optgroup>
+                <optgroup label="JIS G 3350 軽量形鋼">
+                    <option value="keiryouhkatakou">軽量H形鋼</option>
+                    <option value="keimizogatakou">軽みぞ形鋼</option>
+                    <option value="keiryourippuhkatakou">軽量リップH形鋼</option>
+                    <option value="rippumizokatakou">リップみぞ形鋼</option>
+                </optgroup>
+                <optgroup label="JIS G 3466 一般構造用角形鋼管">
+                    <option value="seihoukei">角形鋼管（正方形）</option>
+                    <option value="tyouhoukei">角形鋼管（長方形）</option>
+                </optgroup>
+                <optgroup label="JIS G 3444 一般構造用炭素鋼鋼管">
+                    <option value="koukan">丸形鋼管</option>
+                </optgroup>
+                <optgroup label="任意断面形状">
+                    <option value="矩形">矩形断面</option>
+                    <option value="円形">円形断面</option>
+                </optgroup>
+            </select>
+        </div>
+        
+        
+        <div class="main-content">
+            <div class="steel-info-section">
+                <div id="image-wrapper" class="hidden">
+                   <div class="image-container">
+                       <img id="steel-image" src="" alt="鋼材断面図">
+                       <p class="image-caption">選択された鋼材の断面形状</p>
+                   </div>
+                </div>
+
+                <!-- 部材接合条件: ポップアップ側での接合設定は廃止。テーブルで設定してください -->
+                
+                <div id="table-section" class="hidden">
+                    <div class="table-header">
+                        <h2 id="steel-title">鋼材規格表</h2>
+                        <p class="table-guide">
+                            表の行をクリックすると選択状態となり（青色でハイライト表示）、選択された鋼材の断面性能値と断面図が下部に表示されます。
+                            <br><small>矢印キー（↑↓）でも行選択が可能です。</small>
+                        </p>
+                    </div>
+                    
+                    <div id="full-table-container" class="table-container">
+                        <table class="full-table" id="steel-table">
+                            <thead></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="pickup-wrapper" class="hidden">
+            <div class="results-header">
+                <h2>選択された鋼材の断面性能値</h2>
+                <p class="results-description">選択された鋼材の詳細な断面性能値と断面図を表示します</p>
+            </div>
+            
+            <div class="pickup-container">
+                <div class="pickup-left">
+                    <div class="pickup-table-wrapper">
+                        <h3>断面性能値一覧</h3>
+                        <table class="pickup-table">
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="axis-selector hidden" id="pickup-axis-selector">
+                        <div class="axis-selector-header">
+                            <strong>軸方向選択</strong>
+                            <p>構造計算で使用する軸方向を選択してください</p>
+                        </div>
+                        <div class="axis-options">
+                            <label class="axis-option">
+                                <input type="radio" name="axis-select" value="x" checked> 
+                                <span>強軸方向（X軸）</span>
+                                <small>I<sub>x</sub>, Z<sub>x</sub>, i<sub>x</sub></small>
+                            </label>
+                            <label class="axis-option">
+                                <input type="radio" name="axis-select" value="y"> 
+                                <span>弱軸方向（Y軸）</span>
+                                <small>I<sub>y</sub>, Z<sub>y</sub>, i<sub>y</sub></small>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="pickup-right">
+                    <div id="svg-wrapper">
+                        <h3>断面図</h3>
+                        <div class="svg-container">
+                            <svg id="section-svg"></svg>
+                        </div>
+                        <p class="svg-caption">寸法付き断面図（単位: mm）</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="apply-section">
+                <button id="apply-selection-btn" class="apply-btn">この断面性能を構造計算に適用</button>
+                <p class="apply-note">選択した断面性能値を構造解析プログラムに送信します</p>
+            </div>
+            
+            <!-- 断面算定機能はUIから削除されました -->
+        </div>
+
+        <!-- カスタム計算ツール -->
+        <div class="custom-calculator-section hidden" id="custom-calculator-wrapper">
+            <div class="calculator-header">
+                <h2>任意寸法での断面性能計算ツール</h2>
+                <div class="calculator-description">
+                    <p>任意の寸法を入力することで、その断面の性能値を計算できます。</p>
+                    <p class="note">※角部の丸み（R）や溶接部の影響は考慮されていません。参考値としてご利用ください。</p>
+                </div>
+            </div>
+            
+            <div class="custom-calculator-content">
+                <div class="calculator-input-section">
+                    <div class="input-wrapper">
+                        <h3>寸法入力</h3>
+                        <div id="custom-inputs" class="custom-inputs">
+                            <!-- 動的に生成される入力フィールド -->
+                        </div>
+                    </div>
+                    
+                    <div class="calculator-visual">
+                        <h3>断面図（寸法付き）</h3>
+                        <div id="custom-svg-wrapper" class="svg-wrapper">
+                            <svg id="custom-section-svg"></svg>
+                        </div>
+                        <p class="svg-note">単位: mm</p>
+                    </div>
+                </div>
+                
+                <div class="calculator-results-section">
+                    <div id="custom-results" class="custom-results">
+                        <h3>計算結果</h3>
+                        <div class="results-table-wrapper">
+                            <table class="pickup-table" id="custom-results-table">
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="axis-selector hidden" id="custom-axis-selector">
+                            <div class="axis-selector-header">
+                                <strong>軸方向選択</strong>
+                                <p>構造計算で使用する軸方向を選択してください</p>
+                            </div>
+                            <div class="axis-options">
+                                <label class="axis-option">
+                                    <input type="radio" name="custom-axis-select" value="x" checked> 
+                                    <span>強軸方向（X軸）</span>
+                                    <small>I<sub>x</sub>, Z<sub>x</sub>, i<sub>x</sub></small>
+                                </label>
+                                <label class="axis-option">
+                                    <input type="radio" name="custom-axis-select" value="y"> 
+                                    <span>弱軸方向（Y軸）</span>
+                                    <small>I<sub>y</sub>, Z<sub>y</sub>, i<sub>y</sub></small>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="apply-section">
+                            <button id="apply-custom-btn" class="apply-btn">この断面性能を構造計算に適用</button>
+                            <p class="apply-note">計算した断面性能値を構造解析プログラムに送信します</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="steel_data.js"></script>
+    <script src="steel_selector.js"></script>
+    <script src="communication.js"></script>
+</body>
+</html>

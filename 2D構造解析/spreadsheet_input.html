@@ -1,0 +1,130 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スプレッドシート入力 - Statica 2D</title>
+    
+    <!-- Handsontable - Alternative Spreadsheet Library -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+
+    <style>
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background-color: #f5f5f5;
+        }
+        header {
+            background-color: #217346; /* Excel-like green */
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        h1 { margin: 0; font-size: 1.2rem; }
+        .toolbar {
+            padding: 10px;
+            background-color: #f3f2f1;
+            border-bottom: 1px solid #ccc;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        button {
+            padding: 6px 12px;
+            cursor: pointer;
+            background-color: #217346;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        button:hover { background-color: #105c32; }
+        button.secondary { background-color: #666; }
+        button.secondary:hover { background-color: #444; }
+        
+        .tabs {
+            display: flex;
+            background-color: #e0e0e0;
+            padding-top: 5px;
+            padding-left: 10px;
+            border-bottom: 1px solid #ccc;
+        }
+        .tab {
+            padding: 8px 20px;
+            background-color: #d0d0d0;
+            margin-right: 2px;
+            cursor: pointer;
+            border-radius: 4px 4px 0 0;
+            user-select: none;
+            font-size: 14px;
+        }
+        .tab.active {
+            background-color: white;
+            font-weight: bold;
+            border-bottom: 2px solid white;
+            color: #217346;
+        }
+
+        .sheet-container {
+            flex: 1;
+            overflow: hidden; /* Jspreadsheet handles scroll */
+            background-color: white;
+            position: relative;
+            padding: 10px;
+        }
+        
+        /* Jspreadsheet overrides if needed */
+        .jexcel_container {
+            width: 100% !important;
+        }
+        
+        .info-bar {
+            padding: 5px 10px;
+            background-color: #eee;
+            font-size: 12px;
+            color: #666;
+            border-top: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>スプレッドシート入力</h1>
+    </header>
+    <div class="toolbar">
+        <button id="reflect-btn"> 解析モデルに反映して実行</button>
+        <div style="flex:1"></div>
+        <button id="add-row-btn" class="secondary">+ 行追加</button>
+        <button id="delete-row-btn" class="secondary">- 行削除</button>
+        <div style="width: 20px;"></div>
+        <button id="close-btn" class="secondary">閉じる</button>
+    </div>
+    <div class="tabs">
+        <div class="tab active" data-target="nodes">節点 (Nodes)</div>
+        <div class="tab" data-target="members">部材 (Members)</div>
+        <div class="tab" data-target="node-loads">節点荷重 (Node Loads)</div>
+        <div class="tab" data-target="member-loads">部材荷重 (Member Loads)</div>
+    </div>
+    <div class="sheet-container">
+        <div id="spreadsheet-nodes" style="display:block;"></div>
+        <div id="spreadsheet-members" style="display:none;"></div>
+        <div id="spreadsheet-node-loads" style="display:none;"></div>
+        <div id="spreadsheet-member-loads" style="display:none;"></div>
+    </div>
+    <div class="info-bar">
+        Googleスプレッドシートのように操作できます。数式（=SUM(A1:A5)など）、コピー＆ペースト、ソート、フィルタなどが利用可能です。
+    </div>
+
+    <script src="spreadsheet_input.js"></script>
+</body>
+</html>

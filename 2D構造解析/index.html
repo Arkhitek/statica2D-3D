@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Statica 2D -2次元フレームの構造解析＆断面算定-</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Statica 2D -2次元フレームの構造解析＆断面算定-</h1>
+            <a href="https://arkhitek.co.jp/" target="_blank" class="company-logo-header" title="Arkhitek 公式サイト">
+                <img src="arkhitek-logo.png" alt="Arkhitek Logo">
+            </a>
+        </header>
+
+        <div class="analysis-mode-switcher" role="navigation" aria-label="解析モード切替">
+            <span class="analysis-mode-label">解析モード:</span>
+            <select id="analysis-mode-select" title="2D/3D構造解析を切り替え">
+                <option value="3d">3D構造解析</option>
+                <option value="2d">2D構造解析</option>
+            </select>
+        </div>
+
+        <script>
+            (function () {
+                const select = document.getElementById('analysis-mode-select');
+                if (!select) return;
+
+                const params = new URLSearchParams(window.location.search || '');
+                const embedded = params.get('embed') === '1';
+                if (embedded) {
+                    document.body.classList.add('embedded');
+
+                    // 親(統合版)のページスクロールに寄せるため、iframe高さを内容に合わせられるように通知する
+                    // 同一オリジン前提でpostMessageを使用（event.sourceで親側が検証）
+                    const postHeightToParent = () => {
+                        try {
+                            if (!window.parent || window.parent === window) return;
+                            const body = document.body;
+                            const el = document.documentElement;
+                            const height = Math.max(
+                                body ? body.scrollHeight : 0,
+                                el ? el.scrollHeight : 0,
+                                body ? body.offsetHeight : 0,
+                                el ? el.offsetHeight : 0
+                            );
+                            window.parent.postMessage({ type: 'statica2d:resize', height }, '*');
+                        } catch (e) {
+                            // ignore
+                        }
+                    };
+
+                    if ('ResizeObserver' in window) {
+                        const ro = new ResizeObserver(() => postHeightToParent());
+                        if (document.documentElement) ro.observe(document.documentElement);
+                        if (document.body) ro.observe(document.body);
+                    }
+
+                    window.addEventListener('load', () => {
+                        postHeightToParent();
+                        setTimeout(postHeightToParent, 200);
+                        setTimeout(postHeightToParent, 800);
+                    });
+                    window.addEventListener('resize', () => setTimeout(postHeightToParent, 50));
+                    setTimeout(postHeightToParent, 0);
+                }
+
+                // 埋め込み時は親ページの切替UIを使う
+                if (embedded) {
+                    return;
+                }
+
+                select.value = '2d';
+                select.addEventListener('change', () => {
+                    const mode = select.value === '2d' ? '2d' : '3d';
+                    window.location.href = `../index.html?mode=${mode}`;
+                });
+            })();
+        </script>
+
+        <main>
+            <div class="input-section">
+                
+
+
+                <h2>1. モデル図</h2>
+
+                <div id="operation-guide">
+                    <h4>操作ガイド</h4>
+                    <div class="guide-columns">
+                        <div class="guide-column">
+                            <div class="guide-section">
+                                <h5>📍 基本操作</h5>
+                                <ul>
+                                    <li><strong>ドラッグ:</strong> 画面移動（パン）</li>
+                                    <li><strong>ホイール:</strong> 拡大・縮小</li>
+                                    <li><strong>クリック:</strong> 単独選択</li>
+                                    <li><strong>右クリック:</strong> コンテキストメニュー</li>
+                                    <li><strong>Shift+クリック:</strong> 複数選択</li>
+                                    <li><strong>Shift+ドラッグ:</strong> 範囲選択</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="guide-section">
+                                <h5>🎯 モード選択</h5>
+                                <ul>
+                                    <li><strong>S:</strong> 選択/移動モード</li>
+                                    <li><strong>N:</strong> 節点追加モード</li>
+                                    <li><strong>M:</strong> 部材追加モード</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="guide-section">
+                                <h5>⚙️ 編集機能</h5>
+                                <ul>
+                                    <li><strong>スプレッドシート入力:</strong> 表形式で一括編集（F値・バネ定数対応）</li>
+                                    <li><strong>右クリック編集:</strong> 節点・部材・荷重の詳細設定</li>
+                                    <li><strong>バネ接合:</strong> 軸(Kx)・せん断(Ky)・回転(Kr)剛性と剛判定</li>
+                                    <li><strong>Excel貼り付け:</strong> 表へのデータ直接ペースト対応</li>
+                                    <li><strong>一括編集:</strong> 複数選択→右クリックでまとめて変更</li>
+                                    <li><strong>Delete:</strong> 選択要素を削除</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="guide-section">
+                                <h5>🔧 便利機能</h5>
+                                <ul>
+                                    <li><strong>フレームジェネレーター:</strong> 多層ラーメン自動生成</li>
+                                    <li><strong>断面選択ツール:</strong> 鋼材断面の選択・設定</li>
+                                    <li><strong>自動スケーリング (A):</strong> 全体表示</li>
+                                    <li><strong>グリッド表示 (G):</strong> 作図補助</li>
+                                    <li><strong>部材情報表示:</strong> マウスオーバー情報</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="guide-section">
+                                <h5>🤖 AI機能</h5>
+                                <ul>
+                                    <li><strong>新規作成モード:</strong> 自然言語で構造モデルを生成</li>
+                                    <li><strong>追加編集モード:</strong> 既存モデルに部材を追加</li>
+                                    <li><strong>音声入力:</strong> 🎤ボタンで音声から指示入力</li>
+                                    <li><strong>鋼材断面検出:</strong> H-200×100等の断面指定を自動認識</li>
+                                </ul>
+                            </div>
+                        </div>
+                        
+                        <div class="guide-column">
+                            <div class="guide-section">
+                                <h5>⌨️ キーボードショートカット</h5>
+                                <ul>
+                                    <li><strong>C:</strong> 計算実行</li>
+                                    <li><strong>R:</strong> レポート出力</li>
+                                    <li><strong>Ctrl+Z:</strong> 元に戻す</li>
+                                    <li><strong>Ctrl+S:</strong> 入力データ保存</li>
+                                    <li><strong>Ctrl+O:</strong> 入力データ読込</li>
+                                    <li><strong>Escape:</strong> 選択クリア</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="guide-section">
+                                <h5>📊 解析・結果表示</h5>
+                                <ul>
+                                    <li><strong>構造解析:</strong> 変位・断面力・支点反力</li>
+                                    <li><strong>断面算定:</strong> 検定比・短期/長期・応力・許容応力</li>
+                                    <li><strong>座屈解析:</strong> 座屈荷重・安全率</li>
+                                    <li><strong>アニメーション:</strong> 変位の動的表示</li>
+                                    <li><strong>表示スタイル:</strong> 節点番号は丸囲い数字で表示</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="guide-section">
+                                <h5>🔍 断面算定機能</h5>
+                                <ul>
+                                    <li><strong>断面算定ボタン:</strong> 選択部材の断面算定実行</li>
+                                    <li><strong>算定結果表示:</strong> 応力・許容応力・検定比・判定</li>
+                                    <li><strong>短期/長期切替:</strong> 荷重条件の選択</li>
+                                    <li><strong>検定比図:</strong> 部材全体の検定比を色分け表示</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="guide-section">
+                                <h5>📁 データ管理</h5>
+                                <ul>
+                                    <li><strong>プリセット:</strong> 計算例の読込</li>
+                                    <li><strong>JSON保存/読込:</strong> 入力データ管理</li>
+                                    <li><strong>レポート/Excel出力:</strong> 結果の保存</li>
+                                    <li><strong>共有リンク:</strong> 短縮URLによるモデル共有</li>
+                                    <li><strong>Excel貼り付け:</strong> 各テーブルへ直接貼り付け可能</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="guide-section">
+                                <h5>🔍 表示制御</h5>
+                                <ul>
+                                    <li><strong>荷重/自重表示:</strong> 荷重矢印の表示切替</li>
+                                    <li><strong>バネ剛性表示:</strong> バネ定数値の表示切替（Kx/Ky/Kr）</li>
+                                    <li><strong>部材寸法表示:</strong> 部材長の表示切替</li>
+                                    <li><strong>倍率調整:</strong> 変位図等の拡大・縮小</li>
+                                </ul>
+                            </div>
+
+                            <div class="guide-section">
+                                <h5>🎬 3Dビューア</h5>
+                                <ul>
+                                    <li><strong>別ウィンドウ表示:</strong> 3Dモデルを独立して確認</li>
+                                    <li><strong>リアルタイム更新:</strong> 編集を即座に反映</li>
+                                    <li><strong>マウス操作:</strong> 回転・移動・ズーム</li>
+                                    <li><strong>断面形状:</strong> H形鋼等の3D表示</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="model-controls">
+                    <button id="auto-scale-btn" class="auto-scale-btn" title="描画範囲をモデル図の大きさに合わせて自動スケーリング (ショートカット: A)">🔍 自動スケーリング</button>
+                    <button id="reset-model-btn" class="reset-btn" title="モデル情報を全て消去します">🔄 モデルリセット</button>
+                    <button id="view-3d-btn" title="3Dでモデルを表示">3Dビューア</button>
+                    <div class="display-controls" style="margin-top: 10px; display: flex; gap: 15px; font-size: 14px;">
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" id="show-external-loads" checked style="margin-right: 5px;">
+                            外部荷重表示
+                        </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" id="show-self-weight" checked style="margin-right: 5px;">
+                            自重表示
+                        </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" id="show-member-dimensions" checked style="margin-right: 5px;">
+                            部材寸法表示
+                        </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" id="show-spring-stiffness" checked style="margin-right: 5px;">
+                            バネ剛性表示
+                        </label>
+                    </div>
+                </div>
+
+                <div class="canvas-controls">
+                    <div>
+                        <button id="mode-select" class="mode-btn" title="節点の選択と移動 (ショートカット: S)">選択/移動 (S)</button>
+                        <span class="help-icon" id="help-select">?</span>
+                        <button id="mode-add-node" class="mode-btn" title="キャンバスをクリックして節点を追加 (ショートカット: N)">節点追加 (N)</button>
+                        <span class="help-icon" id="help-add-node">?</span>
+                        <button id="mode-add-member" class="mode-btn" title="2つの節点をクリックして部材を追加 (ショートカット: M)">部材追加 (M)</button>
+                        <span class="help-icon" id="help-add-member">?</span>
+                        <button id="frame-generator-btn" class="frame-generator-btn" title="多層多スパンラーメン構造を自動生成">フレームジェネレーター</button>
+                        <button id="spreadsheet-input-btn" class="spreadsheet-btn" title="高機能スプレッドシートでデータを編集" style="background-color: #28a745;">スプレッドシート入力</button>
+                        <button id="undo-btn" title="元に戻す (ショートカット: Ctrl+Z)">↩️ 元に戻す</button>
+                    </div>
+                    <div class="canvas-settings">
+                        <label for="anim-scale-input">アニメーション倍率:</label>
+                        <input type="number" id="anim-scale-input" class="grid-input" style="width: 100px;" placeholder="自動">
+
+                        <label for="font-scale-model" style="margin-left: 10px;" title="モデル図の文字サイズを調整">文字サイズ:</label>
+                        <input type="range" id="font-scale-model" min="0.5" max="3.0" step="0.1" value="1.0" style="width: 80px; vertical-align: middle;">
+                        <span id="font-scale-value-model" style="font-size: 12px; width: 40px; display: inline-block; text-align: left;">1.0x</span>
+                        <button id="fit-view-model" title="全体表示" style="margin-left:6px;">⛶ 全体</button>
+
+                        <input type="checkbox" id="grid-toggle" checked>
+                        <label for="grid-toggle" title="グリッド表示切替 (ショートカット: G)">グリッド表示</label>
+                        <input type="checkbox" id="member-info-toggle" title="マウスオーバー時の部材情報表示切替">
+                        <label for="member-info-toggle" title="マウスオーバー時の部材情報表示切替">部材情報</label>
+                        <label for="grid-spacing">間隔(m):</label>
+                        <input type="number" id="grid-spacing" value="1.0" step="0.5" class="grid-input">
+                        <button id="zoom-in-btn" title="拡大">+</button>
+                        <button id="zoom-out-btn" title="縮小">-</button>
+                    </div>
+                </div>
+                
+                <div style="margin: 20px 0; padding: 10px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
+                    <label style="display: flex; align-items: center; cursor: pointer; font-weight: bold;">
+                        <input type="checkbox" id="ai-features-toggle" style="margin-right: 8px;">
+                        🤖 AIによるモデル生成機能を表示
+                    </label>
+                </div>
+
+                <div class="gemini-generator-section" id="ai-generator-section" style="margin: 20px 0; padding: 15px; background-color: #f0f8ff; border: 1px solid #d1e7fd; border-radius: 8px; display: none;">
+                    <h4 style="margin-top: 0; color: #005A9C;">🤖 AIによるモデル生成</h4>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <label style="font-weight: bold; margin-right: 15px;">生成モード:</label>
+                        <label style="margin-right: 15px;">
+                            <input type="radio" name="ai-generation-mode" value="new" checked style="margin-right: 5px;">
+                            新規作成
+                        </label>
+                        <label>
+                            <input type="radio" name="ai-generation-mode" value="edit" style="margin-right: 5px;">
+                            追加編集
+                        </label>
+                    </div>
+                    
+                    <p id="mode-description" style="font-size: 13px; margin-bottom: 10px;">
+                        作成したい構造モデルを自然言語で入力してください。(例: 高さ5m、スパン10mの門型ラーメン。柱脚は固定。)
+                    </p>
+                    
+                    <!-- 例文選択機能 -->
+                    <div style="margin-bottom: 15px;">
+                        <label style="font-weight: bold; margin-right: 10px;">指示例文:</label>
+                        <select id="example-prompts-select" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
+                            <option value="">例文を選択してください...</option>
+                        </select>
+                    </div>
+                    
+                    <div style="position: relative;">
+                        <textarea id="natural-language-input" rows="3" style="width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 4px;"></textarea>
+                        <button id="voice-input-btn" style="position: absolute; top: 8px; right: 8px; background-color: #28a745; color: white; border: none; border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 14px;" title="音声入力">🎤</button>
+                    </div>
+                    
+                    <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
+                        <button id="generate-model-btn" style="padding: 8px 15px; background-color: #6f42c1; color: white; border: none; border-radius: 4px; cursor: pointer;">AIで生成</button>
+                        <div id="voice-status" style="font-size: 13px; color: #666; display: none;"></div>
+                    </div>
+                    
+                    <div id="ai-status-indicator" style="margin-top: 10px; font-size: 13px; display: none;"></div>
+                </div>
+                
+                <div class="canvas-container">
+                    <canvas id="model-canvas"></canvas>
+                    <div id="member-tooltip" class="member-tooltip hidden">
+                        <div class="tooltip-header">部材情報</div>
+                        <div class="tooltip-body">
+                            <div class="tooltip-column tooltip-meta"></div>
+                            <div class="tooltip-column tooltip-section-block"></div>
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button id="calculate-and-animate-btn">計算実行 & アニメーション表示</button>
+                </div>
+                <div class="file-controls">
+                    <div>
+                        <label for="preset-selector"><b>計算例プリセット:</b></label>
+                        <select id="preset-selector"></select>
+                    </div>
+                    <div>
+                        <button id="save-btn" title="入力データを保存 (ショートカット: Ctrl+S)">入力保存</button>
+                        <button id="load-btn" title="入力データを読込 (ショートカット: Ctrl+O)">入力読込</button>
+                        <button id="create-share-link-btn" title="モデル共有用のリンクを作成">共有リンク作成</button>
+                    </div>
+                </div>
+
+                <h2>2. 荷重条件</h2>
+                <div class="grid-inputs">
+                    <div class="table-container">
+                        <h3>節点荷重</h3>
+                        <table id="node-loads-table">
+                            <thead>
+                                <tr>
+                                    <th>節点 #</th>
+                                    <th>X方向荷重 Px (kN)</th>
+                                    <th>Y方向荷重 Py (kN)</th>
+                                    <th>モーメント Mz (kN・m)</th>
+                                    <th>削除</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                        <button id="add-node-load-btn">節点荷重を追加</button>
+                    </div>
+                    <div class="table-container">
+                        <h3>部材等分布荷重</h3>
+                        <table id="member-loads-table">
+                            <thead>
+                                <tr>
+                                    <th>部材 #</th>
+                                    <th class="col-member-w">部材座標系y方向 w (kN/m)</th>
+                                    <th>削除</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                        <button id="add-member-load-btn">部材荷重を追加</button>
+                    </div>
+                </div>
+
+                <h2>3. 構造定義</h2>
+                <div>
+                    <div class="table-container">
+                        <h3>節点座標と境界条件</h3>
+                        <table id="nodes-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:5%">節点 #</th>
+                                    <th style="width:15%">X座標 (m)</th>
+                                    <th style="width:15%">Y座標 (m)</th>
+                                    <th style="width:15%">境界条件</th>
+                                    <th style="width:15%">強制変位 δx (mm)</th>
+                                    <th style="width:15%">強制変位 δy (mm)</th>
+                                    <th style="width:10%">強制回転 θz (rad)</th>
+                                    <th style="width:10%">削除</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                        <button id="add-node-btn">節点を追加</button>
+                    </div>
+
+                    <div class="table-container">
+                        <h3>部材 (物性値・接合条件)</h3>
+                        <div class="column-toggles">
+                            <span>表示項目: </span>
+                            <label><input type="checkbox" class="col-toggle" data-target="col-material"> 材料情報</label>
+                            <label><input type="checkbox" class="col-toggle" data-target="col-section" checked> 断面情報</label>
+                            <label><input type="checkbox" class="col-toggle" data-target="col-buckling"> 座屈関連情報</label>
+                            <label><input type="checkbox" class="col-toggle" data-target="col-conn"> 接合条件</label>
+                        </div>
+
+                        <div style="margin-bottom: 10px;">
+                            <label>
+                                <input type="checkbox" id="consider-self-weight-checkbox"> 
+                                部材の自重を考慮する
+                            </label>
+                        </div>
+                        <table id="members-table">
+                            <thead>
+                                <tr>
+                                    <th>部材#</th>
+                                    <th>始点#i</th>
+                                    <th>終点#j</th>
+                                    <th class="col-material">弾性係数 E (N/mm²)</th>
+                                    <th class="col-material section-check-item">基準強度 F (N/mm²)</th>
+                                    <th class="col-section">断面二次モーメント I (cm⁴)</th>
+                                    <th class="col-section">断面積 A (cm²)</th>
+                                    <th class="col-section section-check-item">断面係数 Z (cm³)</th>
+                                    <th class="col-buckling section-check-item" title="断面2次半径 (弱軸)">断面2次半径 i (cm)</th>
+                                    <th class="col-material density-column" style="display: none;">密度 ρ (kg/m³)</th>
+                                    <th class="col-buckling section-check-item" title="座屈長さ係数 (空欄=自動)">座屈係数 K</th>
+                                    <th class="col-section">断面名称</th>
+                                    <th class="col-section">軸方向</th>
+                                    <th class="col-section">断面選択</th>
+                                    <th class="col-conn">始端</th>
+                                    <th class="col-conn">終端</th>
+                                    <th>削除</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                        <button id="add-member-btn">部材を追加</button>
+                    </div>
+                </div>
+
+                <button id="calculate-btn" title="構造解析を実行 (ショートカット: C)">計算実行</button>
+            </div>
+
+
+            <div class="output-section">
+                <div class="output-header">
+                    <h2>計算結果</h2>
+                    <button id="report-btn" style="margin-top:0;" title="レポート出力 (ショートカット: R)">レポート出力</button>
+                    <button id="export-excel-btn" style="margin-top:0;">📊 エクセル出力</button>
+                </div>
+                <div id="error-message" class="error"></div>
+                
+                <div class="result-visuals">
+                    <div class="canvas-container">
+                        <h3>変位図 (mm)</h3>
+                        <div class="canvas-settings" style="justify-content: flex-end; margin-bottom: 5px;">
+                            <label for="disp-scale-input">表示倍率:</label>
+                            <input type="number" id="disp-scale-input" class="grid-input" style="width: 100px;">
+
+                            <label for="font-scale-displacement" style="margin-left: 10px;">文字サイズ:</label>
+                            <input type="range" id="font-scale-displacement" min="0.5" max="3.0" step="0.1" value="1.0" style="width: 80px; vertical-align: middle;">
+                            <span id="font-scale-value-displacement" style="font-size: 12px; width: 30px;">1.0x</span>
+                            <button id="fit-view-displacement" title="全体表示" style="margin-left:6px;">⛶ 全体</button>
+                        </div>
+                        <canvas id="displacement-canvas"></canvas>
+                    </div>
+                    <div class="canvas-container">
+                        <h3>曲げモーメント図 (BMD) (kN・m)</h3>
+                        <div class="canvas-settings" style="justify-content: flex-end; margin-bottom: 5px;">
+                            <label for="font-scale-moment">文字サイズ:</label>
+                            <input type="range" id="font-scale-moment" min="0.5" max="3.0" step="0.1" value="1.0" style="width: 80px; vertical-align: middle;">
+                            <span id="font-scale-value-moment" style="font-size: 12px; width: 30px;">1.0x</span>
+                            <button id="fit-view-moment" title="全体表示" style="margin-left:6px;">⛶ 全体</button>
+                        </div>
+                        <canvas id="moment-canvas"></canvas>
+                    </div>
+                    <div class="canvas-container">
+                        <h3>軸力図 (AFD) (kN)</h3>
+                        <div class="canvas-settings" style="justify-content: flex-end; margin-bottom: 5px;">
+                            <label for="font-scale-axial">文字サイズ:</label>
+                            <input type="range" id="font-scale-axial" min="0.5" max="3.0" step="0.1" value="1.0" style="width: 80px; vertical-align: middle;">
+                            <span id="font-scale-value-axial" style="font-size: 12px; width: 30px;">1.0x</span>
+                            <button id="fit-view-axial" title="全体表示" style="margin-left:6px;">⛶ 全体</button>
+                        </div>
+                        <canvas id="axial-canvas"></canvas>
+                    </div>
+                    <div class="canvas-container">
+                        <h3>せん断力図 (SFD) (kN)</h3>
+                        <div class="canvas-settings" style="justify-content: flex-end; margin-bottom: 5px;">
+                            <label for="font-scale-shear">文字サイズ:</label>
+                            <input type="range" id="font-scale-shear" min="0.5" max="3.0" step="0.1" value="1.0" style="width: 80px; vertical-align: middle;">
+                            <span id="font-scale-value-shear" style="font-size: 12px; width: 30px;">1.0x</span>
+                            <button id="fit-view-shear" title="全体表示" style="margin-left:6px;">⛶ 全体</button>
+                        </div>
+                        <canvas id="shear-canvas"></canvas>
+                    </div>
+                </div>
+
+                <h3>節点変位</h3>
+                <div class="table-container-result">
+                    <table id="displacement-results"></table>
+                </div>
+
+                <h3>支点反力</h3>
+                <div class="table-container-result">
+                    <table id="reaction-results"></table>
+                </div>
+
+                <h3>部材端力</h3>
+                <div class="table-container-result">
+                    <table id="force-results"></table>
+                </div>
+
+                <div class="section-check-item">
+                    <div class="output-header">
+                        <h2>断面算定結果</h2>
+                        <div class="check-controls">
+                            <label><input type="radio" name="load-term" value="short" checked> 短期</label>
+                            <label><input type="radio" name="load-term" value="long"> 長期</label>
+                        </div>
+                    </div>
+                    <div class="canvas-container">
+                        <h3>検定比図 (D/C)</h3>
+                        <div class="canvas-settings" style="justify-content: flex-end; margin-bottom: 5px;">
+                            <label for="font-scale-ratio">文字サイズ:</label>
+                            <input type="range" id="font-scale-ratio" min="0.5" max="3.0" step="0.1" value="1.0" style="width: 80px; vertical-align: middle;">
+                            <span id="font-scale-value-ratio" style="font-size: 12px; width: 30px;">1.0x</span>
+                            <button id="fit-view-ratio" title="全体表示" style="margin-left:6px;">⛶ 全体</button>
+                        </div>
+                        <canvas id="ratio-canvas"></canvas>
+                    </div>
+                    <h3>検定比 詳細</h3>
+                    <div class="table-container-result">
+                        <table id="section-check-results"></table>
+                    </div>
+
+                    <h3>たわみ制限</h3>
+                    <div class="canvas-settings" style="justify-content: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <label for="defl-amp-factor">変形増大係数:</label>
+                        <input type="number" id="defl-amp-factor" min="0" step="0.1" value="1.0" style="width: 80px;">
+
+                        <label for="defl-allow-mm">許容たわみ(mm):</label>
+                        <input type="number" id="defl-allow-mm" min="0" step="0.1" value="10" style="width: 90px;">
+                        <span style="font-size: 12px; color: #666;">0=スパン比を使用</span>
+
+                        <label for="defl-span-ratio">スパン比(L/):</label>
+                        <input type="number" id="defl-span-ratio" min="1" step="1" value="300" style="width: 80px;">
+                    </div>
+                    <div class="table-container-result">
+                        <table id="deflection-check-results"></table>
+                    </div>
+
+                    <h3>横座屈（曲げ材）</h3>
+                    <div class="canvas-settings" style="justify-content: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <label for="ltb-unbraced-factor">横補剛間隔係数（Lb/L）:</label>
+                        <input type="number" id="ltb-unbraced-factor" min="0" step="0.05" value="1.0" style="width: 80px;">
+                        <span style="font-size: 12px; color: #666;">Lb=係数×部材長</span>
+
+                        <label for="ltb-cb">モーメント修正係数 Cb:</label>
+                        <input type="number" id="ltb-cb" min="0" step="0.05" value="1.0" style="width: 80px;">
+
+                        <label for="ltb-nu">ポアソン比 ν:</label>
+                        <input type="number" id="ltb-nu" min="0" max="0.49" step="0.01" value="0.30" style="width: 80px;">
+                    </div>
+                    <div class="table-container-result">
+                        <table id="ltb-check-results"></table>
+                    </div>
+                </div>
+
+                <div class="output-section">
+                    <div class="output-header">
+                        <h2>座屈解析結果</h2>
+                    </div>
+                    <h3>座屈解析 詳細</h3>
+                    <div class="table-container-result">
+                        <table id="buckling-analysis-results"></table>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+
+        <footer class="app-footer">
+            <a href="https://arkhitek.co.jp/" target="_blank" class="company-logo-footer" title="Arkhitek 公式サイト">
+                <img src="arkhitek-logo.png" alt="Arkhitek Logo">
+            </a>
+        </footer>
+    </div>
+
+    <div id="node-context-menu" class="context-menu">
+        <div class="context-menu-item" id="menu-edit-node-props">プロパティを編集...</div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" id="menu-delete-node">節点を削除</div>
+    </div>
+
+    <div id="member-props-popup" class="popup-box member-props-popup-wide">
+        <h4>部材プロパティ編集</h4>
+        <div class="popup-toggles" style="margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #eee;">
+            <label style="margin-right:10px; font-size:12px;"><input type="checkbox" class="popup-toggle" data-target="popup-group-material"> 材料情報</label>
+            <label style="margin-right:10px; font-size:12px;"><input type="checkbox" class="popup-toggle" data-target="popup-group-section" checked> 断面情報</label>
+            <label style="margin-right:10px; font-size:12px;"><input type="checkbox" class="popup-toggle" data-target="popup-group-buckling"> 座屈関連情報</label>
+            <label style="margin-right:10px; font-size:12px;"><input type="checkbox" class="popup-toggle" data-target="popup-group-conn"> 接合条件</label>
+            <label style="margin-right:10px; font-size:12px;"><input type="checkbox" class="popup-toggle" data-target="popup-group-wload"> 部材等分布荷重</label>
+        </div>
+
+        <div class="props-grid">
+            <label for="popup-e-container" class="popup-group-material">E (N/mm²)</label>
+            <div id="popup-e-container" class="popup-group-material"></div>
+            
+            <label for="popup-f-container" class="section-check-item popup-group-material">F (N/mm²)</label>
+            <div id="popup-f-container" class="section-check-item popup-group-material"></div>
+
+            <label for="popup-i" class="popup-group-section">I (cm⁴)</label>
+            <input type="number" id="popup-i" class="popup-group-section">
+            
+            <label for="popup-a" class="popup-group-section">A (cm²)</label>
+            <input type="number" id="popup-a" class="popup-group-section">
+            
+            <label for="popup-z" class="section-check-item popup-group-section">Z (cm³)</label>
+            <input type="number" id="popup-z" class="section-check-item popup-group-section">
+
+            <label for="popup-radius-i" class="section-check-item popup-group-buckling" style="font-size: 0.95em;">断面2次半径 i (cm)</label>
+            <input type="number" id="popup-radius-i" class="section-check-item popup-group-buckling radius-i-input" step="0.01" placeholder="自動">
+            
+            <label for="popup-buckling-k" class="popup-group-buckling">座屈係数 K</label>
+            <input type="number" id="popup-buckling-k" step="0.1" placeholder="自動" title="空欄または0で自動判定" class="popup-group-buckling">
+
+            <div class="conn-group popup-group-conn">
+                <label for="popup-i-conn">始端接合</label>
+                <select id="popup-i-conn">
+                        <option value="rigid">剛</option>
+                        <option value="pinned">ピン</option>
+                        <option value="spring">バネ</option>
+                </select>
+                <div id="popup-i-spring-box" style="display:none; margin-top:6px;">
+                    <div class="spring-grid">
+                        <div class="spring-input">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                                <label for="popup-i-spring-kx" style="margin-bottom: 0;">Kx (kN/mm)</label>
+                                <label style="margin-bottom: 0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                    <input id="popup-i-spring-rigid-kx" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-i-spring-kx').disabled = this.checked">剛
+                                </label>
+                            </div>
+                            <input id="popup-i-spring-kx" type="number" min="0" step="0.01" value="0">
+                        </div>
+                        <div class="spring-input">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                                <label for="popup-i-spring-ky" style="margin-bottom: 0;">Ky (kN/mm)</label>
+                                <label style="margin-bottom: 0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                    <input id="popup-i-spring-rigid-ky" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-i-spring-ky').disabled = this.checked">剛
+                                </label>
+                            </div>
+                            <input id="popup-i-spring-ky" type="number" min="0" step="0.01" value="0">
+                        </div>
+                        <div class="spring-input">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                                <label for="popup-i-spring-kr" style="margin-bottom: 0;">Kr (kN·mm/rad)</label>
+                                <label style="margin-bottom: 0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                    <input id="popup-i-spring-rigid-kr" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-i-spring-kr').disabled = this.checked">剛
+                                </label>
+                            </div>
+                            <input id="popup-i-spring-kr" type="number" min="0" step="0.01" value="0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="conn-group popup-group-conn">
+                <label for="popup-j-conn">終端接合</label>
+                <select id="popup-j-conn">
+                        <option value="rigid">剛</option>
+                        <option value="pinned">ピン</option>
+                        <option value="spring">バネ</option>
+                </select>
+                <div id="popup-j-spring-box" style="display:none; margin-top:6px;">
+                    <div class="spring-grid">
+                        <div class="spring-input">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                                <label for="popup-j-spring-kx" style="margin-bottom: 0;">Kx (kN/mm)</label>
+                                <label style="margin-bottom: 0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                    <input id="popup-j-spring-rigid-kx" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-j-spring-kx').disabled = this.checked">剛
+                                </label>
+                            </div>
+                            <input id="popup-j-spring-kx" type="number" min="0" step="0.01" value="0">
+                        </div>
+                        <div class="spring-input">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                                <label for="popup-j-spring-ky" style="margin-bottom: 0;">Ky (kN/mm)</label>
+                                <label style="margin-bottom: 0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                    <input id="popup-j-spring-rigid-ky" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-j-spring-ky').disabled = this.checked">剛
+                                </label>
+                            </div>
+                            <input id="popup-j-spring-ky" type="number" min="0" step="0.01" value="0">
+                        </div>
+                        <div class="spring-input">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                                <label for="popup-j-spring-kr" style="margin-bottom: 0;">Kr (kN·mm/rad)</label>
+                                <label style="margin-bottom: 0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                    <input id="popup-j-spring-rigid-kr" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-j-spring-kr').disabled = this.checked">剛
+                                </label>
+                            </div>
+                            <input id="popup-j-spring-kr" type="number" min="0" step="0.01" value="0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <label for="popup-w" class="popup-group-wload">w (kN/m)</label>
+            <input type="number" id="popup-w" title="等分布荷重" class="popup-group-wload">
+        </div>
+        
+        <div class="popup-buttons">
+            <div id="popup-section-label" class="popup-group-section" style="margin-right:12px; font-weight:600;">断面: -</div>
+            <button id="popup-select-section">断面選択...</button> <button id="popup-delete-member">削除</button>
+            <button id="popup-cancel">キャンセル</button>
+            <button id="popup-save">保存</button>
+        </div>
+    </div>
+    
+    <div id="node-props-popup" class="popup-box" style="width: 320px;">
+        <h4>節点プロパティ編集</h4>
+        <div class="props-grid" style="grid-template-columns: 120px 1fr;">
+            <label for="popup-x">X座標 (m)</label>
+            <input type="number" id="popup-x" step="0.01">
+            <label for="popup-y">Y座標 (m)</label>
+            <input type="number" id="popup-y" step="0.01">
+            
+            <label for="popup-support">境界条件</label>
+            <select id="popup-support">
+                <option value="free">自由</option>
+                <option value="pinned">ピン</option>
+                <option value="fixed">固定</option>
+                <option value="roller_x_fixed">ローラー(垂直自由)</option>
+                <option value="roller_y_fixed">ローラー(水平自由)</option>
+            </select>
+            
+            <label for="popup-px">荷重 Px (kN)</label>
+            <input type="number" id="popup-px" step="0.1">
+            <label for="popup-py">荷重 Py (kN)</label>
+            <input type="number" id="popup-py" step="0.1">
+            <label for="popup-mz">荷重 Mz (kN・m)</label>
+            <input type="number" id="popup-mz" step="0.1">
+            
+            <label for="popup-dx">強制変位 δx (mm)</label>
+            <input type="number" id="popup-dx" step="0.1">
+            <label for="popup-dy">強制変位 δy (mm)</label>
+            <input type="number" id="popup-dy" step="0.1">
+            <label for="popup-dr">強制回転 θz (rad)</label>
+            <input type="number" id="popup-dr" step="0.001">
+        </div>
+        <div class="popup-buttons">
+            <button id="popup-delete-node" style="background-color: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">削除</button>
+            <button id="popup-node-props-cancel">キャンセル</button>
+            <button id="popup-node-props-save">保存</button>
+        </div>
+    </div>
+
+    <div id="add-member-popup" class="popup-box add-member-popup-wide">
+        <h4>部材追加設定</h4>
+        <p style="font-size: 13px; margin-top: -5px; margin-bottom: 10px;">キャンバス上で追加する部材の物性値を設定します。</p>
+        
+        <div class="popup-toggles" style="margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #eee;">
+            <label style="margin-right:10px; font-size:12px;"><input type="checkbox" class="add-popup-toggle" data-target="add-group-material"> 材料情報</label>
+            <label style="margin-right:10px; font-size:12px;"><input type="checkbox" class="add-popup-toggle" data-target="add-group-section" checked> 断面情報</label>
+            <label style="margin-right:10px; font-size:12px;"><input type="checkbox" class="add-popup-toggle" data-target="add-group-buckling"> 座屈関連情報</label>
+            <label style="margin-right:10px; font-size:12px;"><input type="checkbox" class="add-popup-toggle" data-target="add-group-conn"> 接合条件</label>
+        </div>
+
+        <div id="add-popup-section-info" class="section-info-display add-group-section" style="display: none;">
+            <strong>選択断面:</strong> <span id="add-popup-section-name">-</span>
+            (<span id="add-popup-section-axis">-</span>)
+        </div>
+
+        <div class="props-grid">
+            <label for="add-popup-e-container" class="add-group-material" style="display:none;">E (N/mm²)</label>
+            <div id="add-popup-e-container" class="add-group-material" style="display:none;"></div>
+            
+            <label for="add-popup-f-container" class="section-check-item add-group-material" style="display:none;">F (N/mm²)</label>
+            <div id="add-popup-f-container" class="section-check-item add-group-material" style="display:none;"></div>
+
+            <div id="add-popup-density-wrapper" class="add-group-material" style="display:none; grid-column: 1 / -1;"></div>
+
+            <label for="add-popup-i" class="add-group-section">I (cm⁴)</label>
+            <input type="number" id="add-popup-i" class="add-group-section">
+            
+            <label for="add-popup-a" class="add-group-section">A (cm²)</label>
+            <input type="number" id="add-popup-a" class="add-group-section">
+            
+            <label for="add-popup-z" class="section-check-item add-group-section">Z (cm³)</label>
+            <input type="number" id="add-popup-z" class="section-check-item add-group-section">
+            
+            <label for="add-popup-radius-i" class="add-group-section add-group-buckling">断面2次半径 i (cm)</label>
+            <input type="number" id="add-popup-radius-i" class="add-group-section add-group-buckling" step="0.1" placeholder="自動">
+
+            <label for="add-popup-buckling-k" class="add-group-buckling" style="display:none;">座屈係数 K</label>
+            <input type="number" id="add-popup-buckling-k" step="0.1" placeholder="自動" title="空欄または0で自動判定" class="add-group-buckling" style="display:none;">
+
+            <label for="add-popup-i-conn" class="add-group-conn" style="display:none;">始端接合</label>
+            <select id="add-popup-i-conn" class="add-group-conn" style="display:none;">
+                <option value="rigid">剛</option>
+                <option value="pinned">ピン</option>
+                <option value="spring">バネ</option>
+            </select>
+            
+            <label for="add-popup-j-conn" class="add-group-conn" style="display:none;">終端接合</label>
+            <select id="add-popup-j-conn" class="add-group-conn" style="display:none;">
+                <option value="rigid">剛</option>
+                <option value="pinned">ピン</option>
+                <option value="spring">バネ</option>
+            </select>
+        </div>
+
+        <div class="popup-buttons">
+            <button id="add-popup-select-section">断面選択...</button>
+            <button id="add-popup-cancel">キャンセル</button>
+            <button id="add-popup-ok">OK</button>
+        </div>
+    </div>
+
+    <!-- フレームジェネレーター モーダル -->
+    <div id="frame-generator-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>フレームジェネレーター</h3>
+                <span class="modal-close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="generator-section">
+                    <h4>基本設定</h4>
+                    <div class="generator-row">
+                        <label for="frame-floors">層数:</label>
+                        <input type="number" id="frame-floors" min="1" max="20" value="3" step="1">
+                        <span class="unit">層</span>
+                    </div>
+                    <div class="generator-row">
+                        <label for="frame-spans">スパン数:</label>
+                        <input type="number" id="frame-spans" min="1" max="20" value="3" step="1">
+                        <span class="unit">スパン</span>
+                    </div>
+                </div>
+                
+                <div class="generator-section">
+                    <h4>寸法設定</h4>
+                    <div class="generator-row">
+                        <label for="frame-span-length">スパン長:</label>
+                        <input type="number" id="frame-span-length" min="1" max="50" value="6.0" step="0.1">
+                        <span class="unit">m</span>
+                    </div>
+                    <div class="generator-row">
+                        <label for="frame-floor-height">階高:</label>
+                        <input type="number" id="frame-floor-height" min="1" max="20" value="3.5" step="0.1">
+                        <span class="unit">m</span>
+                    </div>
+                </div>
+                
+                <div class="generator-section">
+                    <h4>境界条件設定</h4>
+                    <div class="generator-row">
+                        <label>
+                            <input type="checkbox" id="frame-fix-base" checked>
+                            基礎部を固定支点とする（チェック外すとピン支点）
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="generator-section">
+                    <h4>配置設定</h4>
+                    <div class="generator-row">
+                        <label for="frame-start-x">開始X座標:</label>
+                        <input type="number" id="frame-start-x" value="0.0" step="0.1">
+                        <span class="unit">m</span>
+                    </div>
+                    <div class="generator-row">
+                        <label for="frame-start-y">開始Y座標:</label>
+                        <input type="number" id="frame-start-y" value="0.0" step="0.1">
+                        <span class="unit">m</span>
+                    </div>
+                </div>
+                
+                <div class="generator-preview">
+                    <div class="preview-text">
+                        <strong>生成予定:</strong> 
+                        <span id="preview-nodes">12</span>節点, 
+                        <span id="preview-members">17</span>部材<br>
+                        <strong>基礎支点:</strong> <span id="preview-support">固定支点</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="frame-generator-cancel" class="cancel-btn">キャンセル</button>
+                <button id="frame-generator-generate" class="generate-btn">生成</button>
+            </div>
+        </div>
+    </div>
+    <div id="share-link-modal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 600px; height: auto; animation: slideIn 0.3s ease;">
+            <div class="modal-header">
+                <h3>モデル共有リンク</h3>
+                <span id="share-link-modal-close" class="modal-close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>以下のリンクをコピーして共有してください。リンクを開くと現在のモデルが再現されます。</p>
+                <textarea id="share-link-textarea" rows="4" style="width: 100%; resize: none; font-family: monospace; padding: 8px; border: 1px solid #ccc; border-radius: 4px; margin-top: 10px;"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button id="copy-share-link-btn" class="generate-btn">リンクをコピー</button>
+            </div>
+        </div>
+    </div>
+    <script src="steel_data.js"></script>
+    <script src="frame_analyzer.js"></script>
+    <script src="communication.js"></script>
+    <script src="../visibility_controls.js"></script>
+</body>
+</html>
