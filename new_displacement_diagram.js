@@ -384,19 +384,25 @@ const getShearComponentsForAxis = (memberForce, axis) => {
     const fallbackQi = toNumber(memberForce.Q_i);
     const fallbackQj = toNumber(memberForce.Q_j);
 
+    // 注意:
+    // ここでの axis は「曲げモーメントの軸」を意味する（My/Mz など）。
+    // そのため対応するせん断力は同じ軸ではなく、直交する方向成分になる。
+    // - Mz ↔ Qy（Y方向のせん断が Z軸周りの曲げを生む）
+    // - My ↔ Qz（Z方向のせん断が Y軸周りの曲げを生む）
     switch (axis) {
         case 'z':
-            return {
-                Qi: toNumber(memberForce.Qz_i, fallbackQi),
-                Qj: toNumber(memberForce.Qz_j, fallbackQj)
-            };
-        case 'y':
             return {
                 Qi: toNumber(memberForce.Qy_i, fallbackQi),
                 Qj: toNumber(memberForce.Qy_j, fallbackQj)
             };
+        case 'y':
+            return {
+                Qi: toNumber(memberForce.Qz_i, fallbackQi),
+                Qj: toNumber(memberForce.Qz_j, fallbackQj)
+            };
         case 'x':
         default:
+            // YZ平面系など（Mx）の場合は、表示上もっとも支配的なせん断成分を採用
             return {
                 Qi: pickDominantComponent(memberForce.Qy_i, memberForce.Qz_i ?? fallbackQi),
                 Qj: pickDominantComponent(memberForce.Qy_j, memberForce.Qz_j ?? fallbackQj)
@@ -4298,271 +4304,118 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
     
     console.log('🔍 軸選択:', { projectionMode, currentAxis, secondaryAxis });
     
-    // 第1軸と同様の投影面処理を使用
+    // 第1軸と同じレイアウト/描画スタイルに揃える
     const projectionModes = ['iso'];
     const frameData = [];
-    const tolerance = 0.01;
-    
     projectionModes.forEach(mode => {
-        if (mode === 'iso') {
-            // 等角投影の場合は全ての部材を対象とし、応力が0でも表示
-            frameData.push({ mode: 'iso', coord: 0, axis: secondaryAxis });
-        } else {
-            const coords = getAllFrameCoordinates(nodes, mode);
-            if (coords.length > 0) {
-                coords.forEach(coord => {
-                    // この構面に含まれる部材をチェック
-                    let hasNonZeroStress = false;
-                    
-                    for (let idx = 0; idx < members.length; idx++) {
-                        const m = members[idx];
-                        const nodeI = nodes[m.i];
-                        const nodeJ = nodes[m.j];
-                        if (!nodeI || !nodeJ) continue;
-                        
-                        // 部材の両端節点がこの構面上にあるかチェック
-                        let coordI = 0, coordJ = 0;
-                        if (mode === 'xy') {
-                            coordI = nodeI.z;
-                            coordJ = nodeJ.z;
-                        } else if (mode === 'xz') {
-                            coordI = nodeI.y;
-                            coordJ = nodeJ.y;
-                        } else if (mode === 'yz') {
-                            coordI = nodeI.x;
-                            coordJ = nodeJ.x;
-                        }
-                        
-                        // 両端点がこの構面上にある場合
-                        if (Math.abs(coordI - coord) < tolerance && Math.abs(coordJ - coord) < tolerance) {
-                            if (memberForces[idx]) {
-                                const forces = memberForces[idx];
-                                
-                                let stress = 0;
-                                if (stressType === 'moment') {
-                                    const { Mi, Mj } = getMomentComponentsForAxis(forces, secondaryAxis);
-                                    const start = convertMomentForDiagram(Mi, 'i');
-                                    const end = convertMomentForDiagram(Mj, 'j');
-                                    stress = Math.max(Math.abs(start), Math.abs(end));
-                                } else if (stressType === 'shear') {
-                                    const { Qi, Qj } = getShearComponentsForAxis(forces, secondaryAxis);
-                                    const start = convertShearForDiagram(Qi, 'i');
-                                    const end = convertShearForDiagram(Qj, 'j');
-                                    stress = Math.max(Math.abs(start), Math.abs(end));
-                                }
-
-                                if (stress > 0.001) { // 0.001以上の応力があれば表示
-                                    hasNonZeroStress = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
-                    // 応力が0以外の構面のみを追加
-                    if (hasNonZeroStress) {
-                        frameData.push({ mode, coord, axis: secondaryAxis });
-                    }
-                });
-            }
-        }
+        if (mode === 'iso') frameData.push({ mode: 'iso', coord: 0 });
     });
 
-    if (frameData.length === 0) {
-        ctx.fillStyle = '#666';
-        ctx.font = 'bold 24px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('第2軸の応力が検出されませんでした', canvas.width / 2, canvas.height / 2);
-        return;
-    }
+    if (frameData.length === 0) return;
 
-    // 動的サイズ設定: 画面幅の50%を使用
-    const container = canvas.parentElement;
-    const availableWidth = container ? container.clientWidth : 1200;
-    const availableHeight = container ? container.clientHeight : 900;
-    
-    const frameWidth = Math.floor(availableWidth * 0.9);  // 90%を使用（余白考慮）
-    const frameHeight = Math.floor(availableHeight * 0.8); // 80%を使用（余白考慮）
-    const framePadding = 40; // 構面間の余白
-    const headerHeight = 80; // ヘッダー高さ
-    
-    // キャンバスサイズを調整（横スクロール対応）
+    // drawStressDiagram と同じ固定サイズ
+    const frameWidth = 1200;
+    const frameHeight = 900;
+    const framePadding = 40;
+    const headerHeight = 80;
+
     const totalWidth = frameData.length * (frameWidth + framePadding) + framePadding;
     const totalHeight = frameHeight + headerHeight + framePadding * 2;
 
-    // 高DPI対応: デバイスピクセル比を取得
     const dpr = window.devicePixelRatio || 1;
-
-    // キャンバスの内部解像度を高解像度に設定
     canvas.width = totalWidth * dpr;
     canvas.height = totalHeight * dpr;
-
-    // CSSでの表示サイズは元のサイズ
     canvas.style.width = totalWidth + 'px';
     canvas.style.height = totalHeight + 'px';
-
-    // コンテキストをスケール
     ctx.scale(dpr, dpr);
 
-    // 応力の最大値を計算（スケール決定用）- 第1軸と同じ方式を使用
+    // 応力の最大値を計算（スケール決定用）
     let maxStress = 0;
     members.forEach((m, idx) => {
         if (!memberForces[idx]) return;
         const forces = memberForces[idx];
 
-        // 第2軸の応力をチェック（第1軸と同じ計算方式）
-        let stress = 0;
         if (stressType === 'moment') {
             const { Mi, Mj } = getMomentComponentsForAxis(forces, secondaryAxis);
             const start = convertMomentForDiagram(Mi, 'i');
             const end = convertMomentForDiagram(Mj, 'j');
-            stress = Math.max(Math.abs(start), Math.abs(end));
-        } else if (stressType === 'shear') {
-            const { Qi, Qj } = getShearComponentsForAxis(forces, secondaryAxis);
-            const start = convertShearForDiagram(Qi, 'i');
-            const end = convertShearForDiagram(Qj, 'j');
-            stress = Math.max(Math.abs(start), Math.abs(end));
+            maxStress = Math.max(maxStress, Math.abs(start), Math.abs(end));
         } else if (stressType === 'axial') {
             const { Ni, Nj } = getAxialComponents(forces);
             const start = convertAxialForDiagram(Ni, 'i');
             const end = convertAxialForDiagram(Nj, 'j');
-            stress = Math.max(Math.abs(start), Math.abs(end));
+            maxStress = Math.max(maxStress, Math.abs(start), Math.abs(end));
+        } else if (stressType === 'shear') {
+            const { Qi, Qj } = getShearComponentsForAxis(forces, secondaryAxis);
+            const start = convertShearForDiagram(Qi, 'i');
+            const end = convertShearForDiagram(Qj, 'j');
+            maxStress = Math.max(maxStress, Math.abs(start), Math.abs(end));
         }
-
-        maxStress = Math.max(maxStress, stress);
     });
-    
 
-    if (maxStress < 0.001) {
-        ctx.fillStyle = '#666';
-        ctx.font = 'bold 24px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('第2軸の応力が検出されませんでした', canvas.width / 2, canvas.height / 2);
-        return;
-    }
+    // 応力図のスケール（第1軸と同じ係数）
+    const maxStressPixels = Math.min(frameWidth, frameHeight) * 0.06;
+    let baseStressScale = maxStress > 0 ? maxStressPixels / maxStress : 1;
 
-    // 第1軸のスケールを使用（第1軸と完全に同じサイズにするため）
-    let globalStressScale = null;
-    if (typeof window.lastStressScale === 'number' && window.lastStressScale > 0) {
-        globalStressScale = window.lastStressScale;
-    } else {
-        // 第1軸と同じスケール計算方式を使用
-        const globalMaxStressPixels = Math.min(frameWidth, frameHeight) * 0.06;
-        globalStressScale = maxStress > 0 ? globalMaxStressPixels / maxStress : 1;
-    }
-
-    // 各フレームを描画（第1軸と同様の方式）
     frameData.forEach((frame, index) => {
         const x = framePadding + index * (frameWidth + framePadding);
         const y = headerHeight + framePadding;
-        const drawWidth = frameWidth;
-        const drawHeight = frameHeight;
 
-        // フレームの境界線を描画
+        // タイトル（第1軸と同じ位置に表示）
+        ctx.fillStyle = '#333';
+        ctx.font = 'bold 20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('等角投影図', x + frameWidth / 2, framePadding + 25);
+        ctx.font = '16px Arial';
+        ctx.fillText(secondaryTitle, x + frameWidth / 2, framePadding + 50);
+
+        // 背景
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(x, y, frameWidth, frameHeight);
+
+        // 枠線
         ctx.strokeStyle = '#ccc';
         ctx.lineWidth = 2;
-        ctx.strokeRect(x, y, drawWidth, drawHeight);
+        ctx.strokeRect(x, y, frameWidth, frameHeight);
 
-        // フレームタイトルを描画
-        ctx.fillStyle = '#333';
-        ctx.font = 'bold 18px Arial';
-        ctx.textAlign = 'center';
-        let frameTitle = '';
-        if (frame.mode === 'iso') {
-            frameTitle = secondaryTitle;
-        } else {
-            frameTitle = `${secondaryTitle} (${frame.mode.toUpperCase()}平面, z=${frame.coord.toFixed(2)})`;
-        }
-        ctx.fillText(frameTitle, x + drawWidth / 2, y + 30);
-
-        // 構面内に描画するための座標変換を設定（第1軸と同様のクリッピング）
         ctx.save();
         ctx.beginPath();
-        ctx.rect(x, y, drawWidth, drawHeight);
+        ctx.rect(x, y, frameWidth, frameHeight);
         ctx.clip();
 
-        // このフレームに含まれる部材を特定
-        const visibleMembers = [];
-        members.forEach(m => {
-            const nodeI = nodes[m.i];
-            const nodeJ = nodes[m.j];
-            if (!nodeI || !nodeJ) return;
+        // iso は全節点/全要素
+        const visibleNodes = new Set();
+        nodes.forEach((_, idx) => visibleNodes.add(idx));
+        const visibleMembers = members.filter(m => visibleNodes.has(m.i) && visibleNodes.has(m.j));
 
-            let coordI = 0, coordJ = 0;
-            if (frame.mode === 'iso') {
-                // 等角投影の場合は全ての部材を含める
-                visibleMembers.push(m);
-                return;
-            } else if (frame.mode === 'xy') {
-                coordI = nodeI.z;
-                coordJ = nodeJ.z;
-            } else if (frame.mode === 'xz') {
-                coordI = nodeI.y;
-                coordJ = nodeJ.y;
-            } else if (frame.mode === 'yz') {
-                coordI = nodeI.x;
-                coordJ = nodeJ.x;
-            }
-
-            // 両端点がこの構面上にある場合
-            if (Math.abs(coordI - frame.coord) < tolerance && Math.abs(coordJ - frame.coord) < tolerance) {
-                visibleMembers.push(m);
-            }
-        });
-
-        // このフレームに含まれる節点を特定（第1軸と同様）
-        const visibleNodes = [];
-        nodes.forEach((node, idx) => {
-            let coordToCheck = 0;
-            if (frame.mode === 'iso') {
-                // 等角投影の場合は全ての節点を含める
-                visibleNodes.push(idx);
-                return;
-            } else if (frame.mode === 'xy') {
-                coordToCheck = node.z || 0;
-            } else if (frame.mode === 'xz') {
-                coordToCheck = node.y || 0;
-            } else if (frame.mode === 'yz') {
-                coordToCheck = node.x;
-            }
-
-            // この構面上にある場合
-            if (Math.abs(coordToCheck - frame.coord) < tolerance) {
-                visibleNodes.push(idx);
-            }
-        });
-
-        // このフレームの構造サイズを計算（第1軸と同様）
-        let minX = Infinity, maxX = -Infinity;
-        let minY = Infinity, maxY = -Infinity;
-        let minZ = Infinity, maxZ = -Infinity;
-
-        visibleNodes.forEach(idx => {
-            const node = nodes[idx];
-            const projected = project3DTo2D(node, frame.mode);
-            minX = Math.min(minX, projected.x);
-            maxX = Math.max(maxX, projected.x);
-            minY = Math.min(minY, projected.y);
-            maxY = Math.max(maxY, projected.y);
-        });
-
-        const modelWidth = maxX - minX;
-        const modelHeight = maxY - minY;
-
-        // 部材が見つからない場合はスキップ
         if (visibleMembers.length === 0) {
             ctx.restore();
             return;
         }
 
-        // 座標変換関数（第1軸と完全に同じ計算方式）
-        // 第1軸と同じモデルスケール計算を使用
+        // モデル範囲（第1軸と同じ計算）
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+        visibleMembers.forEach(m => {
+            const ni = nodes[m.i];
+            const nj = nodes[m.j];
+            const pi = project3DTo2D(ni, frame.mode);
+            const pj = project3DTo2D(nj, frame.mode);
+            minX = Math.min(minX, pi.x, pj.x);
+            maxX = Math.max(maxX, pi.x, pj.x);
+            minY = Math.min(minY, pi.y, pj.y);
+            maxY = Math.max(maxY, pi.y, pj.y);
+        });
+
+        const modelWidth = maxX - minX;
+        const modelHeight = maxY - minY;
+        const margin = 40;
+        const drawWidth = frameWidth - 2 * margin;
+        const drawHeight = frameHeight - 2 * margin;
+
         let modelScale = 1;
         if (modelWidth > 0 && modelHeight > 0) {
             modelScale = Math.min(drawWidth / modelWidth, drawHeight / modelHeight) * 0.9;
-        } else {
-            // 構造サイズが0の場合はデフォルトスケールを使用
-            modelScale = Math.min(drawWidth, drawHeight) * 0.1;
         }
 
         const centerX = (minX + maxX) / 2;
@@ -4570,38 +4423,36 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
         const offsetX = x + frameWidth / 2;
         const offsetY = y + frameHeight / 2;
 
-        const transform = (px, py) => {
-            return {
-                x: offsetX + (px - centerX) * modelScale,
-                y: offsetY - (py - centerY) * modelScale
-            };
-        };
-        
+        const transform = (px, py) => ({
+            x: offsetX + (px - centerX) * modelScale,
+            y: offsetY - (py - centerY) * modelScale
+        });
 
-        // 応力図のスケール（第1軸と同じスケールを使用）
-        let stressScale = globalStressScale || 1;
-        
-        // 枠外にはみ出さないよう、許容スケール上限を算出（第1軸と同じ処理）
+        const labelObstacles = [];
+        const nodeScreenData = [];
+        const memberScreenData = [];
+
+        visibleNodes.forEach(idx => {
+            const node = nodes[idx];
+            const projected = project3DTo2D(node, frame.mode);
+            const pos = transform(projected.x, projected.y);
+            nodeScreenData.push({ nodeIndex: idx, x: pos.x, y: pos.y });
+            registerCircleObstacle(labelObstacles, pos.x, pos.y, 4);
+        });
+
+        // 枠外にはみ出さないよう、許容スケール上限を算出（第1軸と同等の考え方）
         const EPS = 1e-9;
         let scaleLimit = Infinity;
-
-        // ラベル障害物リスト（第1軸と同様）
-        const labelObstacles = [];
-
-        // まずスケール上限を計算（第1軸と同じ処理）
         visibleMembers.forEach(m => {
+            if (scaleLimit <= EPS) return;
             const memberIndex = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
             if (memberIndex === -1 || !memberForces[memberIndex]) return;
 
             const forces = memberForces[memberIndex];
             const ni = nodes[m.i];
             const nj = nodes[m.j];
-            
-            // 第1軸と同様に、3D座標を2D投影してから座標変換を適用
-            const pi3D = project3DTo2D(ni, frame.mode);
-            const pj3D = project3DTo2D(nj, frame.mode);
-            const pi = transform(pi3D.x, pi3D.y);
-            const pj = transform(pj3D.x, pj3D.y);
+            const pi = project3DTo2D(ni, frame.mode);
+            const pj = project3DTo2D(nj, frame.mode);
 
             const L = Math.sqrt(
                 Math.pow(nj.x - ni.x, 2) +
@@ -4610,6 +4461,7 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
             );
             if (!isFinite(L) || L < EPS) return;
 
+            const distributedLoad = getDistributedLoadForAxis(forces, secondaryAxis);
             const numDivisions = 20;
 
             for (let k = 0; k <= numDivisions; k++) {
@@ -4617,9 +4469,11 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                 let stressValue = 0;
 
                 if (stressType === 'moment') {
-                    stressValue = calculateMemberMomentForAxis(forces, L, xi, secondaryAxis, null);
+                    stressValue = calculateMemberMomentForAxis(forces, L, xi, secondaryAxis, distributedLoad);
+                } else if (stressType === 'axial') {
+                    stressValue = calculateMemberAxial(forces, xi);
                 } else if (stressType === 'shear') {
-                    stressValue = calculateMemberShearForAxis(forces, L, xi, secondaryAxis, null);
+                    stressValue = calculateMemberShearForAxis(forces, L, xi, secondaryAxis, distributedLoad);
                 }
 
                 const absStress = Math.abs(stressValue);
@@ -4627,11 +4481,12 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
 
                 const pos_x = pi.x + (pj.x - pi.x) * xi;
                 const pos_y = pi.y + (pj.y - pi.y) * xi;
+                const p = transform(pos_x, pos_y);
 
-                const distToLeft = pos_x - x;
-                const distToRight = (x + drawWidth) - pos_x;
-                const distToTop = pos_y - y;
-                const distToBottom = (y + drawHeight) - pos_y;
+                const distToLeft = p.x - x;
+                const distToRight = (x + frameWidth) - p.x;
+                const distToTop = p.y - y;
+                const distToBottom = (y + frameHeight) - p.y;
                 const minDist = Math.min(distToLeft, distToRight, distToTop, distToBottom);
 
                 if (minDist <= EPS) {
@@ -4640,18 +4495,45 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                 }
 
                 const candidateScale = minDist / absStress;
-                if (candidateScale < scaleLimit) {
-                    scaleLimit = candidateScale;
-                }
+                if (candidateScale < scaleLimit) scaleLimit = candidateScale;
             }
         });
 
-        // スケール上限を適用（第1軸と同じ処理）
+        let stressScale = baseStressScale;
         if (scaleLimit < Infinity) {
             stressScale = Math.min(stressScale, scaleLimit * 0.95);
         }
 
-        // 部材を描画
+        // 元の構造（グレー）＋ラベル用の法線/接線
+        ctx.strokeStyle = '#ccc';
+        ctx.lineWidth = 1;
+        visibleMembers.forEach(m => {
+            const memberIndex = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
+            if (memberIndex === -1) return;
+            const ni = nodes[m.i];
+            const nj = nodes[m.j];
+            const pi = project3DTo2D(ni, frame.mode);
+            const pj = project3DTo2D(nj, frame.mode);
+            const p1 = transform(pi.x, pi.y);
+            const p2 = transform(pj.x, pj.y);
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const length = Math.hypot(dx, dy) || 1;
+            memberScreenData.push({
+                memberIndex,
+                midX: (p1.x + p2.x) / 2,
+                midY: (p1.y + p2.y) / 2,
+                tangent: { x: dx / length, y: dy / length },
+                normal: { x: -dy / length, y: dx / length }
+            });
+        });
+
+        // 応力図（塗り/輪郭/値表示）
         visibleMembers.forEach(m => {
             const memberIndex = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
             if (memberIndex === -1 || !memberForces[memberIndex]) return;
@@ -4659,64 +4541,52 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
             const forces = memberForces[memberIndex];
             const ni = nodes[m.i];
             const nj = nodes[m.j];
-            
-            // 第1軸と同様に、3D座標を2D投影してから座標変換を適用
-            const pi3D = project3DTo2D(ni, frame.mode);
-            const pj3D = project3DTo2D(nj, frame.mode);
-            const pi = transform(pi3D.x, pi3D.y);
-            const pj = transform(pj3D.x, pj3D.y);
-            
-            // 部材の長さを計算
+            const pi = project3DTo2D(ni, frame.mode);
+            const pj = project3DTo2D(nj, frame.mode);
+
             const L = Math.sqrt(
                 Math.pow(nj.x - ni.x, 2) +
                 Math.pow((nj.y || 0) - (ni.y || 0), 2) +
                 Math.pow((nj.z || 0) - (ni.z || 0), 2)
             );
-            
-            // 部材の方向ベクトル（2D投影面上）
+            if (!isFinite(L) || L <= 1e-9) return;
+
             const dx = pj.x - pi.x;
             const dy = pj.y - pi.y;
             const length = Math.sqrt(dx * dx + dy * dy);
             if (length === 0) return;
 
-            // 垂直方向（応力図を描画する方向）
             const perpX = -dy / length;
             const perpY = dx / length;
 
-            // 部材を分割して応力値を計算
+            const distributedLoad = getDistributedLoadForAxis(forces, secondaryAxis);
             const numDivisions = 20;
             const stressPoints = [];
-            
+
             for (let k = 0; k <= numDivisions; k++) {
                 const xi = k / numDivisions;
                 let stressValue = 0;
 
                 if (stressType === 'moment') {
-                    stressValue = calculateMemberMomentForAxis(forces, L, xi, secondaryAxis, null);
+                    stressValue = calculateMemberMomentForAxis(forces, L, xi, secondaryAxis, distributedLoad);
+                } else if (stressType === 'axial') {
+                    stressValue = calculateMemberAxial(forces, xi);
                 } else if (stressType === 'shear') {
-                    stressValue = calculateMemberShearForAxis(forces, L, xi, secondaryAxis, null);
+                    stressValue = calculateMemberShearForAxis(forces, L, xi, secondaryAxis, distributedLoad);
                 }
 
                 const finiteStressValue = Number.isFinite(stressValue) ? stressValue : 0;
-                
-                // 部材上の位置（既に座標変換済み）
-                const posX = pi.x + (pj.x - pi.x) * xi;
-                const posY = pi.y + (pj.y - pi.y) * xi;
-                
-                
-                // フレーム境界内に制限（第1軸と同様の処理）
-                const clampedX = Math.max(x, Math.min(x + drawWidth, posX));
-                const clampedY = Math.max(y, Math.min(y + drawHeight, posY));
-                
+                const pos_x = pi.x + (pj.x - pi.x) * xi;
+                const pos_y = pi.y + (pj.y - pi.y) * xi;
+                const p = transform(pos_x, pos_y);
                 stressPoints.push({
-                    x: clampedX,
-                    y: clampedY,
+                    x: p.x,
+                    y: p.y,
                     value: finiteStressValue,
                     offset: finiteStressValue * stressScale
                 });
             }
 
-            // 応力図を塗りつぶし（第1軸と同様の方式）
             const positiveFillColor = 'rgba(255, 100, 100, 0.5)';
             const negativeFillColor = 'rgba(100, 100, 255, 0.5)';
 
@@ -4724,48 +4594,33 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
             ctx.globalAlpha = 1.0;
             ctx.globalCompositeOperation = 'source-over';
 
-            // 各セグメントごとに台形を描画
             for (let k = 0; k < stressPoints.length - 1; k++) {
                 const p1 = stressPoints[k];
                 const p2 = stressPoints[k + 1];
-                
-                // 両方とも値がほぼゼロの場合はスキップ
-                if (Math.abs(p1.value) < 1e-9 && Math.abs(p2.value) < 1e-9) {
-                    continue;
-                }
-                
-                // 平均値で色を決定
+                if (Math.abs(p1.value) < 1e-9 && Math.abs(p2.value) < 1e-9) continue;
+
                 const avgValue = (p1.value + p2.value) / 2;
                 const fillColor = avgValue >= 0 ? positiveFillColor : negativeFillColor;
-                
-                // 台形の4点を時計回りに定義
-                const base1X = p1.x;
-                const base1Y = p1.y;
-                const base2X = p2.x;
-                const base2Y = p2.y;
-                
+
                 const offset1 = Number.isFinite(p1.offset) ? p1.offset : 0;
                 const offset2 = Number.isFinite(p2.offset) ? p2.offset : 0;
-                
-                const offset1X = Math.max(x, Math.min(x + drawWidth, base1X + perpX * offset1));
-                const offset1Y = Math.max(y, Math.min(y + drawHeight, base1Y - perpY * offset1));
-                const offset2X = Math.max(x, Math.min(x + drawWidth, base2X + perpX * offset2));
-                const offset2Y = Math.max(y, Math.min(y + drawHeight, base2Y - perpY * offset2));
-                
-                // 台形を描画
+                const off1X = p1.x + perpX * offset1;
+                const off1Y = p1.y - perpY * offset1;
+                const off2X = p2.x + perpX * offset2;
+                const off2Y = p2.y - perpY * offset2;
+
                 ctx.fillStyle = fillColor;
                 ctx.beginPath();
-                ctx.moveTo(base1X, base1Y);
-                ctx.lineTo(offset1X, offset1Y);
-                ctx.lineTo(offset2X, offset2Y);
-                ctx.lineTo(base2X, base2Y);
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.lineTo(off2X, off2Y);
+                ctx.lineTo(off1X, off1Y);
                 ctx.closePath();
                 ctx.fill();
             }
 
             ctx.restore();
 
-            // 応力図の輪郭を描画（滑らかな曲線）
             ctx.strokeStyle = 'red';
             ctx.lineWidth = 1.5;
             ctx.beginPath();
@@ -4773,13 +4628,11 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                 const p = stressPoints[k];
                 const px = Math.max(x, Math.min(x + drawWidth, p.x + perpX * p.offset));
                 const py = Math.max(y, Math.min(y + drawHeight, p.y - perpY * p.offset));
-                
                 if (k === 0) ctx.moveTo(px, py);
                 else ctx.lineTo(px, py);
             }
             ctx.stroke();
-            
-            // 最大応力値の位置を見つけて表示（第1軸と同様）
+
             let maxAbsValue = 0;
             let maxAbsIndex = 0;
             stressPoints.forEach((p, idx) => {
@@ -4788,15 +4641,14 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                     maxAbsIndex = idx;
                 }
             });
-            
-            // 部材端の応力値を表示
+
             const p1 = stressPoints[0];
             const pN = stressPoints[numDivisions];
-            
+
             ctx.font = 'bold 18px Arial';
             ctx.textAlign = 'center';
             ctx.lineWidth = 5;
-            
+
             if (Math.abs(p1.value) > 0.01) {
                 const startValueText = p1.value.toFixed(2);
                 const baseX = p1.x + perpX * p1.offset;
@@ -4807,7 +4659,7 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                     padding: 14
                 });
             }
-            
+
             if (Math.abs(pN.value) > 0.01) {
                 const endValueText = pN.value.toFixed(2);
                 const baseX = pN.x + perpX * pN.offset;
@@ -4818,14 +4670,12 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                     padding: 14
                 });
             }
-            
-            // 最大応力値の位置にマーカーと値を表示（端点以外の場合のみ）
+
             if (maxAbsIndex > 0 && maxAbsIndex < numDivisions && maxAbsValue > 0.01) {
                 const pMax = stressPoints[maxAbsIndex];
                 const maxX = pMax.x + perpX * pMax.offset;
                 const maxY = pMax.y - perpY * pMax.offset;
-                
-                // マーカー（円）を描画
+
                 ctx.fillStyle = pMax.value >= 0 ? 'red' : 'blue';
                 ctx.beginPath();
                 ctx.arc(maxX, maxY, 5, 0, 2 * Math.PI);
@@ -4833,8 +4683,7 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                 ctx.strokeStyle = '#000';
                 ctx.lineWidth = 1;
                 ctx.stroke();
-                
-                // 最大値を表示
+
                 ctx.font = 'bold 16px Arial';
                 ctx.lineWidth = 4;
                 ctx.strokeStyle = 'white';
@@ -4846,17 +4695,39 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                     padding: 16
                 });
             }
-
-            // 部材線を描画（既に座標変換済み）
-            ctx.strokeStyle = '#333';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(pi.x, pi.y);
-            ctx.lineTo(pj.x, pj.y);
-            ctx.stroke();
         });
 
-        // クリッピングを解除
+        // 節点/部材番号ラベル（第1軸と同じ）
+        const nodeLabelOffsets = [
+            { x: 0, y: 26 },
+            { x: 24, y: 0 },
+            { x: -24, y: 0 },
+            { x: 0, y: -28 },
+            { x: 28, y: -18 },
+            { x: -28, y: -18 }
+        ];
+        nodeScreenData.forEach(({ nodeIndex, x: nodeX, y: nodeY }) => {
+            drawCircleNumberLabel(ctx, String(nodeIndex + 1), nodeX, nodeY, labelObstacles, {
+                offsets: nodeLabelOffsets,
+                font: 'bold 13px Arial'
+            });
+        });
+
+        memberScreenData.forEach(({ memberIndex, midX, midY, tangent, normal }) => {
+            const dynamicOffsets = [
+                { x: normal.x * 28, y: normal.y * 28 },
+                { x: -normal.x * 28, y: -normal.y * 28 },
+                { x: tangent.x * 30, y: tangent.y * 30 },
+                { x: -tangent.x * 30, y: -tangent.y * 30 },
+                { x: normal.x * 40, y: normal.y * 40 },
+                { x: -normal.x * 40, y: -normal.y * 40 }
+            ];
+            drawSquareNumberLabel(ctx, String(memberIndex + 1), midX, midY, labelObstacles, {
+                offsets: dynamicOffsets,
+                font: 'bold 13px Arial'
+            });
+        });
+
         ctx.restore();
     });
 };
