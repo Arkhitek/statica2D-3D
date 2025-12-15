@@ -452,6 +452,38 @@
                     </div>
                 </div>
 
+                <h2>4. 耐力壁の設定</h2>
+                <div class="table-container">
+                    <h3>耐力壁（壁エレメント置換）</h3>
+                    <table id="shear-walls-table">
+                        <thead>
+                            <tr>
+                                <th style="width:5%">#</th>
+                                <th style="width:6%">有効</th>
+                                <th style="width:7%">左下#</th>
+                                <th style="width:7%">左上#</th>
+                                <th style="width:7%">右下#</th>
+                                <th style="width:7%">右上#</th>
+                                <th style="width:8%">上オフセット (mm)</th>
+                                <th style="width:8%">下オフセット (mm)</th>
+                                <th style="width:10%">置換柱 せん断剛性 (kN/m)</th>
+                                <th style="width:10%">置換柱 曲げ剛性 EI (kN・m²)</th>
+                                <th style="width:10%">側柱断面</th>
+                                <th style="width:8%">Kx 左下 (kN/m)</th>
+                                <th style="width:8%">Kx 左上 (kN/m)</th>
+                                <th style="width:8%">Kx 右下 (kN/m)</th>
+                                <th style="width:8%">Kx 右上 (kN/m)</th>
+                                <th style="width:6%">削除</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                        <button id="add-shear-wall-btn">耐力壁を追加</button>
+                        <button id="apply-shear-walls-btn">耐力壁をモデルへ反映</button>
+                    </div>
+                </div>
+
                 <button id="calculate-btn" title="構造解析を実行 (ショートカット: C)">計算実行</button>
             </div>
 

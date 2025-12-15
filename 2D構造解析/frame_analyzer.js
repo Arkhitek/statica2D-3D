@@ -1846,8 +1846,11 @@ document.addEventListener('DOMContentLoaded', () => {
         membersTable: document.getElementById('members-table').getElementsByTagName('tbody')[0],
         nodeLoadsTable: document.getElementById('node-loads-table').getElementsByTagName('tbody')[0],
         memberLoadsTable: document.getElementById('member-loads-table').getElementsByTagName('tbody')[0],
+        shearWallsTable: document.getElementById('shear-walls-table') ? document.getElementById('shear-walls-table').getElementsByTagName('tbody')[0] : null,
         addNodeBtn: document.getElementById('add-node-btn'),
         addMemberBtn: document.getElementById('add-member-btn'),
+        addShearWallBtn: document.getElementById('add-shear-wall-btn'),
+        applyShearWallsBtn: document.getElementById('apply-shear-walls-btn'),
         addNodeLoadBtn: document.getElementById('add-node-load-btn'),
         addMemberLoadBtn: document.getElementById('add-member-load-btn'),
         calculateBtn: document.getElementById('calculate-btn'),
@@ -15021,6 +15024,615 @@ const loadPreset = (index) => {
 
     elements.addNodeLoadBtn.onclick = () => { addRow(elements.nodeLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">']); };
     elements.addMemberLoadBtn.onclick = () => { addRow(elements.memberLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">']); };
+
+
+    // =====================================================================
+    // 4. 耐力壁（壁エレメント置換）
+    // =====================================================================
+    const initializeShearWallsFeature = () => {
+        if (!elements.shearWallsTable || !elements.addShearWallBtn || !elements.applyShearWallsBtn) return;
+
+        const SHEAR_WALL_TOL = 1e-6;
+        const SHEAR_WALL_KAPPA = 1.5; // As = A/kappa と同等の仮定に合わせる
+        const SHEAR_WALL_NU = 0.3;
+
+        let nextShearWallId = 1;
+
+        const parseNumber = (v, fallback = 0) => {
+            const n = Number.parseFloat(v);
+            return Number.isFinite(n) ? n : fallback;
+        };
+
+        const getNodesFromTable = () => {
+            return Array.from(elements.nodesTable.rows).map((row, idx) => {
+                const x = parseNumber(row.cells[1]?.querySelector('input')?.value, 0);
+                const y = parseNumber(row.cells[2]?.querySelector('input')?.value, 0);
+                return { id: idx + 1, x, y, row };
+            });
+        };
+
+        const findExistingNodeByCoord = (x, y) => {
+            const nodes = getNodesFromTable();
+            for (const n of nodes) {
+                if (Math.abs(n.x - x) <= SHEAR_WALL_TOL && Math.abs(n.y - y) <= SHEAR_WALL_TOL) return n.id;
+            }
+            return null;
+        };
+
+        const addNodeAt = (x, y) => {
+            const existing = findExistingNodeByCoord(x, y);
+            if (existing) return existing;
+
+            const newRow = addRow(elements.nodesTable, [
+                '#',
+                `<input type="number" value="${x.toFixed(3)}">`,
+                `<input type="number" value="${y.toFixed(3)}">`,
+                `<select><option value="free">自由</option><option value="pinned">ピン</option><option value="fixed">固定</option><option value="roller_x_fixed">ローラー(垂直自由)</option><option value="roller_y_fixed">ローラー(水平自由)</option></select>`,
+                `<input type="number" value="0" step="0.1">`,
+                `<input type="number" value="0" step="0.1">`,
+                `<input type="number" value="0" step="0.001">`
+            ]);
+            // node id はテーブル行順
+            return elements.nodesTable.rows.length;
+        };
+
+        const removeExistingWallMembers = (wallId) => {
+            const rows = Array.from(elements.membersTable.rows);
+            rows.forEach((row) => {
+                if (row && row.dataset && row.dataset.shearWallId === String(wallId)) {
+                    row.remove();
+                }
+            });
+        };
+
+        const setSpringOnConnCell = (connCell, Kx_kN_per_m, { rigidKy = true, rigidKr = true } = {}) => {
+            if (!connCell) return;
+            const select = connCell.querySelector('.conn-select');
+            if (select) select.value = 'spring';
+
+            const springBox = connCell.querySelector('.spring-inputs');
+            if (!springBox) return;
+            springBox.style.display = '';
+
+            const kxInput = springBox.querySelector('.spring-kx');
+            const kyInput = springBox.querySelector('.spring-ky');
+            const krInput = springBox.querySelector('.spring-kr');
+            const rigidKx = springBox.querySelector('.spring-rigid-kx');
+            const rigidKyEl = springBox.querySelector('.spring-rigid-ky');
+            const rigidKrEl = springBox.querySelector('.spring-rigid-kr');
+
+            // UI単位: kN/mm（内部で×1000→kN/m）
+            const Kx_kN_per_mm = Number.isFinite(Kx_kN_per_m) ? (Kx_kN_per_m / 1000) : 0;
+            if (kxInput) {
+                kxInput.disabled = false;
+                kxInput.value = String(Kx_kN_per_mm);
+            }
+            if (rigidKx) rigidKx.checked = false;
+
+            if (kyInput) kyInput.value = '0';
+            if (krInput) krInput.value = '0';
+            if (rigidKyEl) {
+                rigidKyEl.checked = !!rigidKy;
+                if (kyInput) kyInput.disabled = rigidKyEl.checked;
+            }
+            if (rigidKrEl) {
+                rigidKrEl.checked = !!rigidKr;
+                if (krInput) krInput.disabled = rigidKrEl.checked;
+            }
+        };
+
+        const addMemberRow = ({
+            iNode,
+            jNode,
+            E = '205000',
+            F = '235',
+            I_m4,
+            A_m2,
+            Z_m3,
+            i_conn = 'rigid',
+            j_conn = 'rigid',
+            sectionName = '',
+            sectionAxis = '',
+            shearWallId,
+            shearWallRole,
+            springI = null,
+            springJ = null,
+            sectionInfo = null,
+            sectionAxisObj = null
+        }) => {
+            const iArg = '';
+            const newRow = addRow(
+                elements.membersTable,
+                ['#', ...memberRowHTML(iNode, jNode, E, F, I_m4, A_m2, Z_m3, iArg, i_conn, j_conn, sectionName, sectionAxis, '')]
+            );
+            if (!newRow) return null;
+
+            if (shearWallId !== undefined && shearWallId !== null) {
+                newRow.dataset.shearWallId = String(shearWallId);
+                newRow.dataset.shearWallRole = String(shearWallRole || '');
+            }
+
+            // 断面情報（3Dビューア用）
+            try {
+                if (sectionInfo && typeof window.setRowSectionInfo === 'function') {
+                    window.setRowSectionInfo(newRow, sectionInfo);
+                } else if (sectionInfo) {
+                    newRow.dataset.sectionInfo = encodeURIComponent(JSON.stringify(sectionInfo));
+                }
+                if (sectionAxisObj && typeof window.applySectionAxisDataset === 'function') {
+                    window.applySectionAxisDataset(newRow, sectionAxisObj);
+                }
+            } catch (e) {
+                console.warn('耐力壁: sectionInfo保存に失敗', e);
+            }
+
+            // バネ設定
+            try {
+                const connCells = newRow.querySelectorAll('.conn-cell');
+                if (springI && connCells && connCells[0]) setSpringOnConnCell(connCells[0], springI.Kx_kN_per_m, springI.options);
+                if (springJ && connCells && connCells[1]) setSpringOnConnCell(connCells[1], springJ.Kx_kN_per_m, springJ.options);
+            } catch (e) {
+                console.warn('耐力壁: バネ設定に失敗', e);
+            }
+
+            return newRow;
+        };
+
+        const renumberShearWallTable = () => {
+            Array.from(elements.shearWallsTable.rows).forEach((row, idx) => {
+                const cell = row.cells[0];
+                if (cell) cell.textContent = String(idx + 1);
+            });
+        };
+
+        const applySectionToShearWallRow = (row, props) => {
+            if (!row || !props) return;
+            try {
+                row.dataset.sideColumnSectionProps = encodeURIComponent(JSON.stringify(props));
+            } catch (_) {
+                row.dataset.sideColumnSectionProps = '';
+            }
+
+            const labelEl = row.querySelector('.shearwall-section-label');
+            const sectionName = props.sectionName || props.sectionLabel || '';
+            const axis = props.selectedAxis || props.sectionAxisLabel || (props.sectionAxis ? props.sectionAxis.label : '') || '';
+            if (labelEl) {
+                labelEl.textContent = sectionName ? `${sectionName}${axis ? ' / ' + axis : ''}` : '-';
+            }
+        };
+
+        const addShearWallRow = () => {
+            const row = elements.shearWallsTable.insertRow();
+            const wallId = `SW${nextShearWallId++}`;
+            row.dataset.shearWallId = wallId;
+
+            row.insertCell().textContent = '#';
+
+            const enabledCell = row.insertCell();
+            enabledCell.innerHTML = `<input type="checkbox" class="shearwall-enabled" checked>`;
+
+            const makeNodeCell = (defaultValue) => {
+                const cell = row.insertCell();
+                cell.innerHTML = `<input type="number" class="shearwall-node" min="1" step="1" value="${defaultValue}">`;
+            };
+            makeNodeCell(1); // 左下
+            makeNodeCell(1); // 左上
+            makeNodeCell(1); // 右下
+            makeNodeCell(1); // 右上
+
+            const upperOffCell = row.insertCell();
+            upperOffCell.innerHTML = `<input type="number" class="shearwall-off-upper" min="0" step="1" value="0">`;
+
+            const lowerOffCell = row.insertCell();
+            lowerOffCell.innerHTML = `<input type="number" class="shearwall-off-lower" min="0" step="1" value="0">`;
+
+            const kShearCell = row.insertCell();
+            kShearCell.innerHTML = `<input type="number" class="shearwall-k-shear" min="0" step="1" value="0">`;
+
+            const eiCell = row.insertCell();
+            eiCell.innerHTML = `<input type="number" class="shearwall-ei" min="0" step="1" value="0">`;
+
+            const sectionCell = row.insertCell();
+            sectionCell.innerHTML = `
+                <div class="shearwall-section-wrap">
+                    <button type="button" class="shearwall-section-btn">断面選択</button>
+                    <div class="shearwall-section-label">-</div>
+                </div>
+            `;
+
+            const makeSpringCell = () => {
+                const cell = row.insertCell();
+                cell.innerHTML = `<input type="number" class="shearwall-kx" min="0" step="1" value="0">`;
+            };
+            makeSpringCell(); // 左下
+            makeSpringCell(); // 左上
+            makeSpringCell(); // 右下
+            makeSpringCell(); // 右上
+
+            const delCell = row.insertCell();
+            delCell.innerHTML = `<button type="button" class="delete-row-btn">×</button>`;
+            delCell.querySelector('button')?.addEventListener('click', () => {
+                if (confirm('この耐力壁設定行を削除しますか？')) {
+                    removeExistingWallMembers(wallId);
+                    row.remove();
+                    renumberShearWallTable();
+                }
+            });
+
+            // 断面選択
+            const sectionBtn = sectionCell.querySelector('.shearwall-section-btn');
+            if (sectionBtn) {
+                sectionBtn.addEventListener('click', () => {
+                    const url = `${resolveSharedHtmlPath('steel_selector.html')}?targetMember=${encodeURIComponent(wallId)}`;
+                    const popup = window.open(url, 'SteelSelector', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+                    if (!popup) {
+                        alert('ポップアップブロッカーにより断面選択ツールを開けませんでした。ポップアップを許可してください。');
+                        return;
+                    }
+                    const checkPopup = setInterval(() => {
+                        if (!popup.closed) return;
+                        clearInterval(checkPopup);
+                        const storedData = localStorage.getItem('steelSelectionForFrameAnalyzer');
+                        if (!storedData) return;
+                        try {
+                            const data = JSON.parse(storedData);
+                            if (data && data.targetMemberIndex === wallId && data.properties) {
+                                applySectionToShearWallRow(row, data.properties);
+                                localStorage.removeItem('steelSelectionForFrameAnalyzer');
+                            }
+                        } catch (e) {
+                            console.error('耐力壁: 断面選択データの解析エラー', e);
+                        }
+                    }, 400);
+                });
+            }
+
+            renumberShearWallTable();
+            return row;
+        };
+
+        const parseSideColumnSectionProps = (row) => {
+            try {
+                const raw = row.dataset.sideColumnSectionProps;
+                if (!raw) return null;
+                return JSON.parse(decodeURIComponent(raw));
+            } catch (e) {
+                return null;
+            }
+        };
+
+        const applyShearWallsToModel = () => {
+            const rows = Array.from(elements.shearWallsTable.rows);
+            for (const row of rows) {
+                const nodeList = getNodesFromTable();
+                const nodeById = (id) => nodeList[id - 1] || null;
+
+                const wallId = row.dataset.shearWallId;
+                if (!wallId) continue;
+
+                const enabled = !!row.querySelector('.shearwall-enabled')?.checked;
+                if (!enabled) {
+                    removeExistingWallMembers(wallId);
+                    continue;
+                }
+
+                // 既存の同ID生成部材は削除（節点は残す）
+                removeExistingWallMembers(wallId);
+
+                const nodeInputs = Array.from(row.querySelectorAll('input.shearwall-node'));
+                if (nodeInputs.length < 4) continue;
+                const lb = parseInt(nodeInputs[0].value, 10);
+                const lt = parseInt(nodeInputs[1].value, 10);
+                const rb = parseInt(nodeInputs[2].value, 10);
+                const rt = parseInt(nodeInputs[3].value, 10);
+
+                const nLB = nodeById(lb);
+                const nLT = nodeById(lt);
+                const nRB = nodeById(rb);
+                const nRT = nodeById(rt);
+                if (!nLB || !nLT || !nRB || !nRT) {
+                    alert(`耐力壁(${wallId}): 指定した節点番号が無効です。`);
+                    continue;
+                }
+
+                const xL = (nLB.x + nLT.x) / 2;
+                const xR = (nRB.x + nRT.x) / 2;
+                const yB = (nLB.y + nRB.y) / 2;
+                const yT = (nLT.y + nRT.y) / 2;
+
+                const isRect =
+                    Math.abs(nLB.x - nLT.x) <= 1e-3 &&
+                    Math.abs(nRB.x - nRT.x) <= 1e-3 &&
+                    Math.abs(nLB.y - nRB.y) <= 1e-3 &&
+                    Math.abs(nLT.y - nRT.y) <= 1e-3;
+
+                if (!isRect) {
+                    alert(`耐力壁(${wallId}): 指定4点が矩形（左右鉛直・上下水平）になっていません。`);
+                    continue;
+                }
+
+                const offUpperMm = parseNumber(row.querySelector('.shearwall-off-upper')?.value, 0);
+                const offLowerMm = parseNumber(row.querySelector('.shearwall-off-lower')?.value, 0);
+                const yUpper = yT - offUpperMm / 1000;
+                const yLower = yB + offLowerMm / 1000;
+                if (!(yUpper > yLower + 1e-6)) {
+                    alert(`耐力壁(${wallId}): 上下オフセットにより置換柱の高さが成立しません。`);
+                    continue;
+                }
+
+                const sideSection = parseSideColumnSectionProps(row);
+                if (!sideSection || !Number.isFinite(Number(sideSection.I)) || !Number.isFinite(Number(sideSection.A))) {
+                    alert(`耐力壁(${wallId}): 側柱断面が未設定です（断面選択を行ってください）。`);
+                    continue;
+                }
+
+                const sideE = String(sideSection.E || '205000');
+                const sideF = String(sideSection.strengthValue || sideSection.F || '235');
+                const sideI_m4 = Number(sideSection.I) * 1e-8;
+                const sideA_m2 = Number(sideSection.A) * 1e-4;
+                const sideZ_m3 = Number.isFinite(Number(sideSection.Z)) ? (Number(sideSection.Z) * 1e-6) : 1e-6;
+                const sideName = sideSection.sectionName || sideSection.sectionLabel || '側柱';
+                const sideAxisLabel = sideSection.selectedAxis || sideSection.sectionAxisLabel || (sideSection.sectionAxis ? sideSection.sectionAxis.label : '') || '';
+
+                // ばね軸剛性（kN/m）
+                const kxInputs = Array.from(row.querySelectorAll('input.shearwall-kx'));
+                const Kx_LB = parseNumber(kxInputs[0]?.value, 0);
+                const Kx_LT = parseNumber(kxInputs[1]?.value, 0);
+                const Kx_RB = parseNumber(kxInputs[2]?.value, 0);
+                const Kx_RT = parseNumber(kxInputs[3]?.value, 0);
+
+                // 置換柱
+                const kShear = parseNumber(row.querySelector('.shearwall-k-shear')?.value, 0); // kN/m と解釈
+                const EI = parseNumber(row.querySelector('.shearwall-ei')?.value, 0); // kN・m^2 と解釈
+
+                // 追加節点
+                const leftLower = addNodeAt(xL, yLower);
+                const leftUpper = addNodeAt(xL, yUpper);
+                const rightLower = addNodeAt(xR, yLower);
+                const rightUpper = addNodeAt(xR, yUpper);
+                const xC = (xL + xR) / 2;
+                const upperMid = addNodeAt(xC, yUpper);
+                const lowerMid = addNodeAt(xC, yLower);
+
+                // 側柱（左）: LB->LL (spring), LL->LU, LU->LT (spring)
+                addMemberRow({
+                    iNode: lb,
+                    jNode: leftLower,
+                    E: sideE,
+                    F: sideF,
+                    I_m4: sideI_m4,
+                    A_m2: sideA_m2,
+                    Z_m3: sideZ_m3,
+                    i_conn: 'spring',
+                    j_conn: 'rigid',
+                    sectionName: sideName,
+                    sectionAxis: sideAxisLabel,
+                    shearWallId: wallId,
+                    shearWallRole: 'side-left-bottom',
+                    springI: { Kx_kN_per_m: Kx_LB, options: { rigidKy: true, rigidKr: true } },
+                    sectionInfo: sideSection.sectionInfo || null,
+                    sectionAxisObj: sideSection.sectionAxis || null
+                });
+                addMemberRow({
+                    iNode: leftLower,
+                    jNode: leftUpper,
+                    E: sideE,
+                    F: sideF,
+                    I_m4: sideI_m4,
+                    A_m2: sideA_m2,
+                    Z_m3: sideZ_m3,
+                    i_conn: 'rigid',
+                    j_conn: 'rigid',
+                    sectionName: sideName,
+                    sectionAxis: sideAxisLabel,
+                    shearWallId: wallId,
+                    shearWallRole: 'side-left-middle',
+                    sectionInfo: sideSection.sectionInfo || null,
+                    sectionAxisObj: sideSection.sectionAxis || null
+                });
+                addMemberRow({
+                    iNode: leftUpper,
+                    jNode: lt,
+                    E: sideE,
+                    F: sideF,
+                    I_m4: sideI_m4,
+                    A_m2: sideA_m2,
+                    Z_m3: sideZ_m3,
+                    i_conn: 'rigid',
+                    j_conn: 'spring',
+                    sectionName: sideName,
+                    sectionAxis: sideAxisLabel,
+                    shearWallId: wallId,
+                    shearWallRole: 'side-left-top',
+                    springJ: { Kx_kN_per_m: Kx_LT, options: { rigidKy: true, rigidKr: true } },
+                    sectionInfo: sideSection.sectionInfo || null,
+                    sectionAxisObj: sideSection.sectionAxis || null
+                });
+
+                // 側柱（右）: RB->RL (spring), RL->RU, RU->RT (spring)
+                addMemberRow({
+                    iNode: rb,
+                    jNode: rightLower,
+                    E: sideE,
+                    F: sideF,
+                    I_m4: sideI_m4,
+                    A_m2: sideA_m2,
+                    Z_m3: sideZ_m3,
+                    i_conn: 'spring',
+                    j_conn: 'rigid',
+                    sectionName: sideName,
+                    sectionAxis: sideAxisLabel,
+                    shearWallId: wallId,
+                    shearWallRole: 'side-right-bottom',
+                    springI: { Kx_kN_per_m: Kx_RB, options: { rigidKy: true, rigidKr: true } },
+                    sectionInfo: sideSection.sectionInfo || null,
+                    sectionAxisObj: sideSection.sectionAxis || null
+                });
+                addMemberRow({
+                    iNode: rightLower,
+                    jNode: rightUpper,
+                    E: sideE,
+                    F: sideF,
+                    I_m4: sideI_m4,
+                    A_m2: sideA_m2,
+                    Z_m3: sideZ_m3,
+                    i_conn: 'rigid',
+                    j_conn: 'rigid',
+                    sectionName: sideName,
+                    sectionAxis: sideAxisLabel,
+                    shearWallId: wallId,
+                    shearWallRole: 'side-right-middle',
+                    sectionInfo: sideSection.sectionInfo || null,
+                    sectionAxisObj: sideSection.sectionAxis || null
+                });
+                addMemberRow({
+                    iNode: rightUpper,
+                    jNode: rt,
+                    E: sideE,
+                    F: sideF,
+                    I_m4: sideI_m4,
+                    A_m2: sideA_m2,
+                    Z_m3: sideZ_m3,
+                    i_conn: 'rigid',
+                    j_conn: 'spring',
+                    sectionName: sideName,
+                    sectionAxis: sideAxisLabel,
+                    shearWallId: wallId,
+                    shearWallRole: 'side-right-top',
+                    springJ: { Kx_kN_per_m: Kx_RT, options: { rigidKy: true, rigidKr: true } },
+                    sectionInfo: sideSection.sectionInfo || null,
+                    sectionAxisObj: sideSection.sectionAxis || null
+                });
+
+                // 剛棒（上下）: 端部ピン（側柱側）／中央は剛（置換柱と接続）
+                const rigidE = '205000';
+                const rigidF = '235';
+                const rigidI = Math.max(1e-4, sideI_m4 * 1e4);
+                const rigidA = Math.max(1e-2, sideA_m2 * 1e4);
+                const rigidZ = 1e-6;
+
+                // 上剛棒
+                addMemberRow({
+                    iNode: leftUpper,
+                    jNode: upperMid,
+                    E: rigidE,
+                    F: rigidF,
+                    I_m4: rigidI,
+                    A_m2: rigidA,
+                    Z_m3: rigidZ,
+                    i_conn: 'pinned',
+                    j_conn: 'rigid',
+                    sectionName: '剛棒(上)',
+                    sectionAxis: '-',
+                    shearWallId: wallId,
+                    shearWallRole: 'rigid-upper-left'
+                });
+                addMemberRow({
+                    iNode: upperMid,
+                    jNode: rightUpper,
+                    E: rigidE,
+                    F: rigidF,
+                    I_m4: rigidI,
+                    A_m2: rigidA,
+                    Z_m3: rigidZ,
+                    i_conn: 'rigid',
+                    j_conn: 'pinned',
+                    sectionName: '剛棒(上)',
+                    sectionAxis: '-',
+                    shearWallId: wallId,
+                    shearWallRole: 'rigid-upper-right'
+                });
+
+                // 下剛棒
+                addMemberRow({
+                    iNode: leftLower,
+                    jNode: lowerMid,
+                    E: rigidE,
+                    F: rigidF,
+                    I_m4: rigidI,
+                    A_m2: rigidA,
+                    Z_m3: rigidZ,
+                    i_conn: 'pinned',
+                    j_conn: 'rigid',
+                    sectionName: '剛棒(下)',
+                    sectionAxis: '-',
+                    shearWallId: wallId,
+                    shearWallRole: 'rigid-lower-left'
+                });
+                addMemberRow({
+                    iNode: lowerMid,
+                    jNode: rightLower,
+                    E: rigidE,
+                    F: rigidF,
+                    I_m4: rigidI,
+                    A_m2: rigidA,
+                    Z_m3: rigidZ,
+                    i_conn: 'rigid',
+                    j_conn: 'pinned',
+                    sectionName: '剛棒(下)',
+                    sectionAxis: '-',
+                    shearWallId: wallId,
+                    shearWallRole: 'rigid-lower-right'
+                });
+
+                // 置換柱（中央）: せん断剛性=GAs/L（kN/m）としてAを合わせ、曲げ剛性=EI（kN・m^2）としてIを合わせる
+                const replaceE_Nmm2 = 205000;
+                const replaceE_kN_m2 = replaceE_Nmm2 * 1000;
+                const replaceG_kN_m2 = replaceE_kN_m2 / (2 * (1 + SHEAR_WALL_NU));
+                const replaceL = Math.abs(yUpper - yLower);
+                const replaceI_m4 = (EI > 0) ? (EI / replaceE_kN_m2) : 1e-10;
+                const replaceA_m2 = (kShear > 0 && replaceG_kN_m2 > 0 && replaceL > 1e-9)
+                    ? ((kShear * replaceL * SHEAR_WALL_KAPPA) / replaceG_kN_m2)
+                    : 1e-6;
+
+                addMemberRow({
+                    iNode: lowerMid,
+                    jNode: upperMid,
+                    E: String(replaceE_Nmm2),
+                    F: '235',
+                    I_m4: replaceI_m4,
+                    A_m2: replaceA_m2,
+                    Z_m3: 1e-6,
+                    i_conn: 'rigid',
+                    j_conn: 'rigid',
+                    sectionName: '耐力壁置換柱',
+                    sectionAxis: '-',
+                    shearWallId: wallId,
+                    shearWallRole: 'replacement-column'
+                });
+            }
+
+            // 表示更新
+            try {
+                if (typeof window.renumberTables === 'function') window.renumberTables();
+            } catch (_) {
+                // ignore
+            }
+            try {
+                panZoomState.isInitialized = false;
+            } catch (_) {
+                // ignore
+            }
+            if (typeof drawOnCanvas === 'function') drawOnCanvas();
+            if (typeof sendModelToViewer === 'function') {
+                setTimeout(() => {
+                    try { sendModelToViewer(); } catch (_) {}
+                }, 100);
+            }
+        };
+
+        // UIイベント
+        elements.addShearWallBtn.addEventListener('click', () => addShearWallRow());
+        elements.applyShearWallsBtn.addEventListener('click', () => applyShearWallsToModel());
+
+        // 初期行（空テーブルの場合）
+        if (elements.shearWallsTable.rows.length === 0) addShearWallRow();
+    };
+
+    // 初期化（既存UI初期化と干渉しないように遅延）
+    setTimeout(() => {
+        try { initializeShearWallsFeature(); } catch (e) { console.warn('耐力壁機能の初期化に失敗', e); }
+    }, 0);
     
     
     const saveInputData = () => {
