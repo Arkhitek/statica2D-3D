@@ -19362,6 +19362,12 @@ const loadPreset = (index) => {
             try {
                 const data = JSON.parse(e.newValue);
                 if (data && data.targetMemberIndex !== undefined && data.properties) {
+                    // 2D耐力壁などで使用する「文字列ID」(例: SW1) は、2D側の専用処理で反映する。
+                    // ここで消費してしまうと、該当UIが localStorage を読めず反映できなくなるため無視する。
+                    if (typeof data.targetMemberIndex === 'string' && data.targetMemberIndex !== 'bulk' && data.targetMemberIndex !== 'addDefaults') {
+                        console.log('[storage event] skip string targetMemberIndex (handled by feature-specific poller):', data.targetMemberIndex);
+                        return;
+                    }
                     if (data.targetMemberIndex === 'bulk') {
                         window.bulkSectionProperties = data.properties;
                         if (typeof updateBulkSectionInfo === 'function') {

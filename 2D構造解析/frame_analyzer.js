@@ -45,7 +45,14 @@ const resolveSharedHtmlPath = (fileName) => {
         const pathname = window.location && typeof window.location.pathname === 'string'
             ? window.location.pathname
             : '';
-        if (pathname.includes('/2D構造解析/')) return `../${fileName}`;
+        const decodedPathname = (() => {
+            try { return decodeURIComponent(pathname); } catch { return pathname; }
+        })();
+        const folderName = '2D構造解析';
+        const encodedFolderName = encodeURIComponent(folderName);
+        if (decodedPathname.includes(`/${folderName}/`) || pathname.includes(`/${encodedFolderName}/`)) {
+            return `../${fileName}`;
+        }
     } catch (e) {
         // ignore
     }
@@ -324,21 +331,23 @@ const parseInputs = () => {
             if (!cell) return null;
             const container = cell.querySelector('.spring-inputs');
             if (!container) return null;
-            const kx = parseFloat(container.querySelector('.spring-kx')?.value || 0);
+            const kxT = parseFloat(container.querySelector('.spring-kx')?.value || 0);
+            const kxC = parseFloat(container.querySelector('.spring-kx-c')?.value || kxT || 0);
             const ky = parseFloat(container.querySelector('.spring-ky')?.value || 0);
             const kr = parseFloat(container.querySelector('.spring-kr')?.value || 0);
             const rKx = container.querySelector('.spring-rigid-kx')?.checked;
             const rKy = container.querySelector('.spring-rigid-ky')?.checked;
             const rKr = container.querySelector('.spring-rigid-kr')?.checked;
 
-            const Kx_val = kx * 1000; // kN/m
+            const KxT_val = kxT * 1000; // kN/m
+            const KxC_val = kxC * 1000; // kN/m
             const Ky_val = ky * 1000;
             const Kr_val = kr * 1e-3; // kN·m
 
-            if (!rKx && !rKy && Kx_val===0 && Ky_val===0) {
-                return { Kx: EPS_SPRING, Ky: EPS_SPRING, Kr: Kr_val, rigidKx:rKx, rigidKy:rKy, rigidKr:rKr };
+            if (!rKx && !rKy && KxT_val===0 && Ky_val===0) {
+                return { Kx: EPS_SPRING, Kx_tension: EPS_SPRING, Kx_compression: EPS_SPRING, Ky: EPS_SPRING, Kr: Kr_val, rigidKx:rKx, rigidKy:rKy, rigidKr:rKr };
             }
-            return { Kx: Kx_val, Ky: Ky_val, Kr: Kr_val, rigidKx:rKx, rigidKy:rKy, rigidKr:rKr };
+            return { Kx: KxT_val, Kx_tension: KxT_val, Kx_compression: KxC_val, Ky: Ky_val, Kr: Kr_val, rigidKx:rKx, rigidKy:rKy, rigidKr:rKr };
         };
 
         const iConnCell = iConnSelect ? iConnSelect.closest('.conn-cell') : null;
@@ -363,6 +372,7 @@ const parseInputs = () => {
         // ... k_local計算 ...
 
         return {
+                tableRowIndex: index,
             i, j, E, strengthProps, I, A, Z, Zx, Zy, i_radius, ix, iy, length: L, c, s, T, 
             i_conn, j_conn, spring_i, spring_j, bucklingK,
             material, sectionName, sectionAxis: sectionAxisText, // テキスト情報も保存
@@ -1869,12 +1879,14 @@ document.addEventListener('DOMContentLoaded', () => {
         modeSelectBtn: document.getElementById('mode-select'),
         modeAddNodeBtn: document.getElementById('mode-add-node'),
         modeAddMemberBtn: document.getElementById('mode-add-member'),
+        modeAddShearWallBtn: document.getElementById('mode-add-shear-wall'),
         undoBtn: document.getElementById('undo-btn'),
         nodeContextMenu: document.getElementById('node-context-menu'),
         memberPropsPopup: document.getElementById('member-props-popup'),
         nodePropsPopup: document.getElementById('node-props-popup'),
         nodeLoadPopup: document.getElementById('node-load-popup'),
         nodeCoordsPopup: document.getElementById('node-coords-popup'),
+        shearWallPropsPopup: document.getElementById('shear-wall-props-popup'),
         addMemberPopup: document.getElementById('add-member-popup'),
         gridToggle: document.getElementById('grid-toggle'),
         memberInfoToggle: document.getElementById('member-info-toggle'),
@@ -2184,6 +2196,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Global State
     let canvasMode = 'select';
     let firstMemberNode = null;
+    let shearWallAddStartNodeId = null; // 1-based
+    let shearWallAddStartPointModel = null; // {x,y} (model coords)
     let selectedNodeIndex = null;
     let selectedMemberIndex = null;
     let isDragging = false;
@@ -3552,6 +3566,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         };
                         
                         setVal('.spring-kx', updateData.Kx);
+                        setVal('.spring-kx-c', (updateData.Kx_c !== undefined ? updateData.Kx_c : (updateData.KxC !== undefined ? updateData.KxC : updateData.Kx)));
                         setVal('.spring-ky', updateData.Ky);
                         setVal('.spring-kr', updateData.Kr);
                         setChk('.spring-rigid-kx', updateData.rigidKx);
@@ -3634,37 +3649,79 @@ document.addEventListener('DOMContentLoaded', () => {
             opacity: 1 !important;
         `;
         
-        const menuItem = document.createElement('div');
-        menuItem.style.cssText = `
+        const addMenuItem = (label, onClick) => {
+            const item = document.createElement('div');
+            item.style.cssText = `
             padding: 10px 16px;
             cursor: pointer;
             background-color: white !important;
             color: #333 !important;
             font-size: 14px !important;
         `;
-        menuItem.textContent = '選択した節点を一括編集';
-        
-        menuItem.addEventListener('mouseover', () => {
-            menuItem.style.backgroundColor = '#f0f8ff';
-        });
-        
-        menuItem.addEventListener('mouseout', () => {
-            menuItem.style.backgroundColor = 'white';
-        });
-        
-        menuItem.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            
-            // メニューを削除
-            if (document.getElementById('bulk-node-edit-menu')) {
-                document.getElementById('bulk-node-edit-menu').remove();
-            }
-            
-            // ダイアログを表示
+            item.textContent = label;
+            item.addEventListener('mouseover', () => {
+                item.style.backgroundColor = '#f0f8ff';
+            });
+            item.addEventListener('mouseout', () => {
+                item.style.backgroundColor = 'white';
+            });
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (document.getElementById('bulk-node-edit-menu')) {
+                    document.getElementById('bulk-node-edit-menu').remove();
+                }
+                onClick();
+            });
+            menu.appendChild(item);
+        };
+
+        // 4節点選択時: 耐力壁追加
+        if (selectedNodes && selectedNodes.size === 4) {
+            addMenuItem('耐力壁を追加（選択4節点）', () => {
+                try {
+                    const api = window.__shearWalls;
+                    if (!api || typeof api.addShearWallRowWithNodes !== 'function') {
+                        alert('耐力壁機能が初期化されていません。');
+                        return;
+                    }
+                    const tol = 1e-3;
+                    const nodes = Array.from(selectedNodes).map((idx0) => {
+                        const row = elements.nodesTable.rows[idx0];
+                        const x = parseFloat(row?.cells?.[1]?.querySelector('input')?.value || '0');
+                        const y = parseFloat(row?.cells?.[2]?.querySelector('input')?.value || '0');
+                        return { idx0, id: idx0 + 1, x, y };
+                    });
+                    // 下2点/上2点に分けて左右を決定
+                    const byY = [...nodes].sort((a, b) => (a.y - b.y) || (a.x - b.x));
+                    const bottom = byY.slice(0, 2).sort((a, b) => a.x - b.x);
+                    const top = byY.slice(2, 4).sort((a, b) => a.x - b.x);
+                    const lb = bottom[0], rb = bottom[1], lt = top[0], rt = top[1];
+                    const isRect =
+                        Math.abs(lb.x - lt.x) <= tol &&
+                        Math.abs(rb.x - rt.x) <= tol &&
+                        Math.abs(lb.y - rb.y) <= tol &&
+                        Math.abs(lt.y - rt.y) <= tol;
+                    if (!isRect) {
+                        alert('選択した4節点が矩形（左右鉛直・上下水平）になっていません。');
+                        return;
+                    }
+                    const row = api.addShearWallRowWithNodes({ lb: lb.id, lt: lt.id, rb: rb.id, rt: rt.id });
+                    // 入力しやすいようにスクロール＆フォーカス
+                    try { elements.shearWallsTable?.scrollIntoView({ block: 'center' }); } catch (_) {}
+                    const kShearInput = row?.querySelector('.shearwall-k-shear');
+                    if (kShearInput) kShearInput.focus();
+                } catch (e) {
+                    console.error('耐力壁追加に失敗', e);
+                    alert('耐力壁の追加に失敗しました。コンソールログを確認してください。');
+                }
+            });
+        }
+
+        // 通常: 節点一括編集
+        addMenuItem('選択した節点を一括編集', () => {
             window.showBulkNodeEditDialog();
         });
-        menu.appendChild(menuItem);
         document.body.appendChild(menu);
         
         // メニューのサイズを取得してから位置を調整（部材一括編集と同じ方式）
@@ -4074,6 +4131,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const container = cell.querySelector('.spring-inputs');
                 if (!container) return null;
                 const kxEl = container.querySelector('.spring-kx');
+                const kxCEl = container.querySelector('.spring-kx-c');
                 const kyEl = container.querySelector('.spring-ky');
                 const krEl = container.querySelector('.spring-kr');
                 const rigidKxEl = container.querySelector('.spring-rigid-kx');
@@ -4084,18 +4142,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     const v = parseFloat(el.value);
                     return Number.isFinite(v) ? v : 0;
                 };
-                const Kx_raw = parse(kxEl);
+                const KxT_raw = parse(kxEl);
+                const KxC_raw = kxCEl ? parse(kxCEl) : KxT_raw;
                 const Ky_raw = parse(kyEl);
                 const Kr_raw = parse(krEl); // UI入力値 (kN·mm/rad)
-                const { Kx, Ky, Kr } = convertSpringFromUI(Kx_raw, Ky_raw, Kr_raw);
+                const { Kx: KxT, Ky, Kr } = convertSpringFromUI(KxT_raw, Ky_raw, Kr_raw);
+                const { Kx: KxC } = convertSpringFromUI(KxC_raw, 0, 0);
                 const isRigidKx = rigidKxEl ? rigidKxEl.checked : false;
                 const isRigidKy = rigidKyEl ? rigidKyEl.checked : false;
                 const isRigidKr = rigidKrEl ? rigidKrEl.checked : false;
                 const EPS_LOCAL = (typeof EPS_SPRING !== 'undefined') ? EPS_SPRING : 1e-6;
-                if (!isRigidKx && !isRigidKy && (Kx === 0 || Kx === null) && (Ky === 0 || Ky === null)) {
-                    return { Kx: EPS_LOCAL, Ky: EPS_LOCAL, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
+                if (!isRigidKx && !isRigidKy && (KxT === 0 || KxT === null) && (Ky === 0 || Ky === null)) {
+                    return { Kx: EPS_LOCAL, Kx_tension: EPS_LOCAL, Kx_compression: EPS_LOCAL, Ky: EPS_LOCAL, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
                 }
-                return { Kx: Kx || 0, Ky: Ky || 0, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
+                return { Kx: KxT || 0, Kx_tension: KxT || 0, Kx_compression: (KxC || KxT || 0), Ky: Ky || 0, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
             };
 
             // 始端バネ
@@ -4602,9 +4662,14 @@ document.addEventListener('DOMContentLoaded', () => {
                                     const iBox = iSel.closest('.conn-cell')?.querySelector('.spring-inputs');
                                     if (iBox) {
                                         const kx = iBox.querySelector('.spring-kx');
+                                        const kxC = iBox.querySelector('.spring-kx-c');
                                         const ky = iBox.querySelector('.spring-ky');
                                         const kr = iBox.querySelector('.spring-kr');
                                         if (kx && m.spring_i.Kx !== undefined) kx.value = Number(m.spring_i.Kx);
+                                        if (kxC) {
+                                            const v = (m.spring_i.Kx_c !== undefined) ? m.spring_i.Kx_c : (m.spring_i.KxC !== undefined ? m.spring_i.KxC : (m.spring_i.Kx_compression !== undefined ? m.spring_i.Kx_compression : m.spring_i.Kx));
+                                            if (v !== undefined) kxC.value = Number(v);
+                                        }
                                         if (ky && m.spring_i.Ky !== undefined) ky.value = Number(m.spring_i.Ky);
                                         if (kr && m.spring_i.Kr !== undefined) kr.value = Number(m.spring_i.Kr);
                                     }
@@ -4613,9 +4678,14 @@ document.addEventListener('DOMContentLoaded', () => {
                                     const jBox = jSel.closest('.conn-cell')?.querySelector('.spring-inputs');
                                     if (jBox) {
                                         const kx = jBox.querySelector('.spring-kx');
+                                        const kxC = jBox.querySelector('.spring-kx-c');
                                         const ky = jBox.querySelector('.spring-ky');
                                         const kr = jBox.querySelector('.spring-kr');
                                         if (kx && m.spring_j.Kx !== undefined) kx.value = Number(m.spring_j.Kx);
+                                        if (kxC) {
+                                            const v = (m.spring_j.Kx_c !== undefined) ? m.spring_j.Kx_c : (m.spring_j.KxC !== undefined ? m.spring_j.KxC : (m.spring_j.Kx_compression !== undefined ? m.spring_j.Kx_compression : m.spring_j.Kx));
+                                            if (v !== undefined) kxC.value = Number(v);
+                                        }
                                         if (ky && m.spring_j.Ky !== undefined) ky.value = Number(m.spring_j.Ky);
                                         if (kr && m.spring_j.Kr !== undefined) kr.value = Number(m.spring_j.Kr);
                                     }
@@ -5660,6 +5730,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     if(fixedEndForces[idx]) { const fel_mat = fixedEndForces[idx].map(v=>[v]); f_local = mat.add(f_local, fel_mat); }
                     return { N_i: f_local[0][0], Q_i: f_local[1][0], M_i: f_local[2][0], N_j: f_local[3][0], Q_j: f_local[4][0], M_j: f_local[5][0] };
                 });
+
+                // 次回解析でKx(引張/圧縮)を切替えるため、軸力符号を保存
+                try {
+                    const nextMap = {};
+                    members.forEach((m, idx) => {
+                        const rowIdx = m && m.tableRowIndex;
+                        if (rowIdx === undefined || rowIdx === null) return;
+                        const N = memberForces[idx] ? memberForces[idx].N_i : 0;
+                        nextMap[rowIdx] = (Number(N) < 0) ? -1 : 1; // 負=圧縮, 正=引張
+                    });
+                    window.__springAxialSignByMemberRowIndex = nextMap;
+                } catch (e) {
+                    console.warn('spring axial sign map update failed', e);
+                }
                 displayResults(D_global, R, memberForces, nodes, members, nodeLoads, memberLoads);
                 return;
             }
@@ -5711,6 +5795,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 if(fixedEndForces[idx]) { const fel_mat = fixedEndForces[idx].map(v=>[v]); f_local = mat.add(f_local, fel_mat); }
                 return { N_i: f_local[0][0], Q_i: f_local[1][0], M_i: f_local[2][0], N_j: f_local[3][0], Q_j: f_local[4][0], M_j: f_local[5][0] };
             });
+
+            // 次回解析でKx(引張/圧縮)を切替えるため、軸力符号を保存
+            try {
+                const nextMap = {};
+                members.forEach((m, idx) => {
+                    const rowIdx = m && m.tableRowIndex;
+                    if (rowIdx === undefined || rowIdx === null) return;
+                    const N = memberForces[idx] ? memberForces[idx].N_i : 0;
+                    nextMap[rowIdx] = (Number(N) < 0) ? -1 : 1; // 負=圧縮, 正=引張
+                });
+                window.__springAxialSignByMemberRowIndex = nextMap;
+            } catch (e) {
+                console.warn('spring axial sign map update failed', e);
+            }
             
             // 計算成功時は不安定性ハイライトをクリア
             clearInstabilityHighlight();
@@ -6118,6 +6216,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const container = cell.querySelector('.spring-inputs');
                 if (!container) return null;
                 const kxEl = container.querySelector('.spring-kx');
+                const kxCEl = container.querySelector('.spring-kx-c');
                 const kyEl = container.querySelector('.spring-ky');
                 const krEl = container.querySelector('.spring-kr');
                 const rigidKxEl = container.querySelector('.spring-rigid-kx');
@@ -6128,21 +6227,34 @@ document.addEventListener('DOMContentLoaded', () => {
                     const v = parseFloat(el.value);
                     return Number.isFinite(v) ? v : 0;
                 };
-                const Kx_ui = parse(kxEl); // kN/mm
+                const KxT_ui = parse(kxEl); // kN/mm
+                const KxC_ui = kxCEl ? parse(kxCEl) : KxT_ui; // kN/mm
                 const Ky_ui = parse(kyEl); // kN/mm
                 const Kr_ui = parse(krEl); // kN·mm/rad
                 // 単位変換: UI -> 内部
-                const Kx = Kx_ui * 1000; // kN/mm -> kN/m
+                const KxT = KxT_ui * 1000; // kN/mm -> kN/m
+                const KxC = KxC_ui * 1000; // kN/mm -> kN/m
                 const Ky = Ky_ui * 1000; // kN/mm -> kN/m
                 const Kr = Kr_ui * 1e-3;  // kN·mm -> kN·m
                 const isRigidKx = rigidKxEl ? rigidKxEl.checked : false;
                 const isRigidKy = rigidKyEl ? rigidKyEl.checked : false;
                 const isRigidKr = rigidKrEl ? rigidKrEl.checked : false;
+
+                // 解析で使うKxは、前回解析結果の軸力符号に応じて切替（未設定は引張扱い）
+                let axialSign = 1;
+                try {
+                    const map = window.__springAxialSignByMemberRowIndex;
+                    if (map && (index in map)) {
+                        axialSign = (map[index] === -1) ? -1 : 1;
+                    }
+                } catch (_) {}
+                const KxEff = (axialSign < 0) ? (KxC || KxT || 0) : (KxT || 0);
+
                 // 水平・垂直ともに0の場合は最小EPSを入れて解析を安定化させる（ただし剛指定は優先）
-                if (!isRigidKx && !isRigidKy && (Kx === 0 || Kx === null) && (Ky === 0 || Ky === null)) {
-                    return { Kx: EPS_SPRING, Ky: EPS_SPRING, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
+                if (!isRigidKx && !isRigidKy && (KxEff === 0 || KxEff === null) && (Ky === 0 || Ky === null)) {
+                    return { Kx: EPS_SPRING, Kx_tension: EPS_SPRING, Kx_compression: EPS_SPRING, Ky: EPS_SPRING, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
                 }
-                return { Kx: Kx || 0, Ky: Ky || 0, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
+                return { Kx: KxEff || 0, Kx_tension: KxT || 0, Kx_compression: (KxC || KxT || 0), Ky: Ky || 0, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
             };
 
             let spring_i = null;
@@ -7974,6 +8086,54 @@ document.addEventListener('DOMContentLoaded', () => {
                     ctx.font = `bold ${12 * fontScale}px Arial`;
                     ctx.textAlign = 'center';
                     ctx.fillText('クリックで節点選択または新規作成', currentMouseX, currentMouseY - 20);
+                }
+
+                // 耐力壁追加モード（対角2点選択）での矩形プレビュー
+                if (canvasMode === 'addShearWall' && shearWallAddStartPointModel !== null) {
+                    const startPos = transform(shearWallAddStartPointModel.x, shearWallAddStartPointModel.y);
+
+                    // マウス位置をモデル座標へ変換し、グリッドONならスナップ
+                    let endModel = inverseTransform(currentMouseX, currentMouseY);
+                    if (endModel) {
+                        if (elements.gridToggle.checked) {
+                            const spacing = parseFloat(elements.gridSpacing.value);
+                            if (Number.isFinite(spacing) && spacing > 0) {
+                                endModel.x = Math.round(endModel.x / spacing) * spacing;
+                                endModel.y = Math.round(endModel.y / spacing) * spacing;
+                            }
+                        }
+                        const endPos = transform(endModel.x, endModel.y);
+
+                        const left = Math.min(startPos.x, endPos.x);
+                        const right = Math.max(startPos.x, endPos.x);
+                        const top = Math.min(startPos.y, endPos.y);
+                        const bottom = Math.max(startPos.y, endPos.y);
+
+                        ctx.fillStyle = 'rgba(255, 165, 0, 0.45)';
+                        ctx.beginPath();
+                        ctx.arc(startPos.x, startPos.y, 8, 0, 2 * Math.PI);
+                        ctx.fill();
+
+                        ctx.strokeStyle = 'rgba(0, 150, 255, 0.8)';
+                        ctx.lineWidth = 2;
+                        ctx.setLineDash([6, 6]);
+                        ctx.strokeRect(left, top, right - left, bottom - top);
+                        ctx.setLineDash([]);
+                    }
+                }
+
+                // 耐力壁追加モードの案内（デバッグ兼ユーザ誘導）
+                if (canvasMode === 'addShearWall') {
+                    ctx.save();
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+                    const fontScale = window.settings?.fontScales?.model || 1.0;
+                    ctx.font = `bold ${12 * fontScale}px Arial`;
+                    ctx.textAlign = 'left';
+                    const msg = (shearWallAddStartPointModel === null)
+                        ? '耐力壁追加モード: 1点目の節点をクリック'
+                        : '耐力壁追加モード: 対角の節点をクリックして確定';
+                    ctx.fillText(msg, 12, 20);
+                    ctx.restore();
                 }
             }
         } catch (e) {
@@ -10457,7 +10617,88 @@ document.addEventListener('DOMContentLoaded', () => {
         } 
         return -1; 
     };
-    const setCanvasMode = (newMode) => { canvasMode = newMode; firstMemberNode = null; const kebabCaseMode = newMode.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`); document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active')); document.getElementById(`mode-${kebabCaseMode}`).classList.add('active'); elements.modelCanvas.style.cursor = { select: 'default', addNode: 'crosshair', addMember: 'copy' }[newMode]; };
+
+    const getShearWallAt = (canvasX, canvasY) => {
+        if (!lastDrawingContext) return null;
+        if (!elements || !elements.shearWallsTable) return null;
+
+        const parseNum = (v, fallback = NaN) => {
+            const n = Number.parseFloat(v);
+            return Number.isFinite(n) ? n : fallback;
+        };
+
+        try {
+            const { nodes } = parseInputs();
+            const nodeById = (id) => nodes && nodes[id - 1] ? nodes[id - 1] : null;
+
+            const rows = Array.from(elements.shearWallsTable.rows || []);
+            for (const row of rows) {
+                const wallId = row?.dataset?.shearWallId;
+                if (!wallId) continue;
+
+                const enabled = !!row.querySelector('.shearwall-enabled')?.checked;
+                if (!enabled) continue;
+
+                const nodeInputs = Array.from(row.querySelectorAll('input.shearwall-node'));
+                if (nodeInputs.length < 4) continue;
+                const lb = parseInt(nodeInputs[0].value, 10);
+                const lt = parseInt(nodeInputs[1].value, 10);
+                const rb = parseInt(nodeInputs[2].value, 10);
+                const rt = parseInt(nodeInputs[3].value, 10);
+                if (!Number.isFinite(lb) || !Number.isFinite(lt) || !Number.isFinite(rb) || !Number.isFinite(rt)) continue;
+
+                const nLB = nodeById(lb);
+                const nLT = nodeById(lt);
+                const nRB = nodeById(rb);
+                const nRT = nodeById(rt);
+                if (!nLB || !nLT || !nRB || !nRT) continue;
+
+                const xL = (nLB.x + nLT.x) / 2;
+                const xR = (nRB.x + nRT.x) / 2;
+                const yB = (nLB.y + nRB.y) / 2;
+                const yT = (nLT.y + nRT.y) / 2;
+
+                const offUpperMm = parseNum(row.querySelector('.shearwall-off-upper')?.value, 0);
+                const offLowerMm = parseNum(row.querySelector('.shearwall-off-lower')?.value, 0);
+                const yUpper = yT - (Number.isFinite(offUpperMm) ? offUpperMm : 0) / 1000;
+                const yLower = yB + (Number.isFinite(offLowerMm) ? offLowerMm : 0) / 1000;
+                if (!(yUpper > yLower)) continue;
+
+                const p1 = lastDrawingContext.transform(xL, yLower);
+                const p2 = lastDrawingContext.transform(xL, yUpper);
+                const p3 = lastDrawingContext.transform(xR, yUpper);
+                const p4 = lastDrawingContext.transform(xR, yLower);
+                const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
+                const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
+                const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
+                const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
+
+                // 壁面は塗りつぶし領域なので、右クリックが多少ズレても拾えるように少し広めに判定する
+                const tol = 8;
+                if (canvasX >= minX - tol && canvasX <= maxX + tol && canvasY >= minY - tol && canvasY <= maxY + tol) {
+                    return wallId;
+                }
+            }
+        } catch (e) {
+            console.warn('getShearWallAt error:', e);
+        }
+        return null;
+    };
+    const setCanvasMode = (newMode) => {
+        canvasMode = newMode;
+        firstMemberNode = null;
+        shearWallAddStartNodeId = null;
+        shearWallAddStartPointModel = null;
+
+        const kebabCaseMode = newMode.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
+        document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+        const btn = document.getElementById(`mode-${kebabCaseMode}`);
+        if (btn) btn.classList.add('active');
+
+        const cursorMap = { select: 'default', addNode: 'crosshair', addMember: 'copy', addShearWall: 'crosshair' };
+        elements.modelCanvas.style.cursor = cursorMap[newMode] || 'default';
+        if (typeof drawOnCanvas === 'function') drawOnCanvas();
+    };
 
     elements.zoomInBtn.onclick = () => {
         const rect = elements.modelCanvas.getBoundingClientRect();
@@ -10594,6 +10835,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     elements.modeSelectBtn.onclick = () => setCanvasMode('select');
     elements.modeAddNodeBtn.onclick = () => setCanvasMode('addNode');
+    if (elements.modeAddShearWallBtn) {
+        elements.modeAddShearWallBtn.onclick = () => setCanvasMode('addShearWall');
+    }
     elements.modeAddMemberBtn.onclick = () => {
         console.log('🔍 部材追加ボタンがクリックされました');
         
@@ -10921,6 +11165,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (canvasMode === 'addMember') {
             drawOnCanvas();
         }
+
+        // 耐力壁追加モードの場合もプレビューを更新
+        if (canvasMode === 'addShearWall' && shearWallAddStartPointModel !== null) {
+            drawOnCanvas();
+        }
         
         // デバッグ：1%の確率でマウス移動の詳細を出力
         if (Math.random() < 0.01) {
@@ -11014,6 +11263,163 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     elements.modelCanvas.addEventListener('click', (e) => { 
         const rect = elements.modelCanvas.getBoundingClientRect(); let mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top; const clickedNodeIndex = getNodeAt(mouseX, mouseY); 
+
+        if (canvasMode === 'addShearWall') {
+            const resetShearWallAddState = () => {
+                shearWallAddStartNodeId = null;
+                shearWallAddStartPointModel = null;
+                if (typeof drawOnCanvas === 'function') drawOnCanvas();
+            };
+
+            try {
+                // 1点目/2点目とも「節点クリック」必須（ただし判定を少し甘くする）
+                const pickNodeIndexForShearWall = (cx, cy, nodes) => {
+                    if (!window.lastDrawingContext || !nodes || nodes.length === 0) return -1;
+                    const tolerance = 22; // 通常より広め
+                    let bestIdx = -1;
+                    let bestDist = Infinity;
+                    for (let i = 0; i < nodes.length; i++) {
+                        const n = nodes[i];
+                        if (!n) continue;
+                        const p = window.lastDrawingContext.transform(n.x, n.y);
+                        const dx = cx - p.x;
+                        const dy = cy - p.y;
+                        const d = Math.sqrt(dx * dx + dy * dy);
+                        if (d <= tolerance && d < bestDist) {
+                            bestDist = d;
+                            bestIdx = i;
+                        }
+                    }
+                    return bestIdx;
+                };
+
+                const { nodes } = parseInputs();
+                const pickedIndex = (clickedNodeIndex !== -1) ? clickedNodeIndex : pickNodeIndexForShearWall(mouseX, mouseY, nodes);
+                if (pickedIndex === -1) return;
+
+                const clickedNode = nodes[pickedIndex];
+                if (!clickedNode) return;
+
+                if (shearWallAddStartPointModel === null) {
+                    shearWallAddStartNodeId = pickedIndex + 1;
+                    shearWallAddStartPointModel = { x: clickedNode.x, y: clickedNode.y };
+                    drawOnCanvas();
+                    return;
+                }
+
+                const start = shearWallAddStartPointModel;
+                const end = { x: clickedNode.x, y: clickedNode.y };
+                if (Math.abs(start.x - end.x) < 1e-12 && Math.abs(start.y - end.y) < 1e-12) {
+                    resetShearWallAddState();
+                    return;
+                }
+
+                const xMin = Math.min(start.x, end.x);
+                const xMax = Math.max(start.x, end.x);
+                const yMin = Math.min(start.y, end.y);
+                const yMax = Math.max(start.y, end.y);
+
+                if (Math.abs(xMax - xMin) < 1e-9 || Math.abs(yMax - yMin) < 1e-9) {
+                    alert('耐力壁追加: 対角2点は縦横に離れた2点を選択してください。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                // 範囲内の節点座標を集計し、格子パネルごとに耐力壁を追加
+                const tolKey = (v) => Math.round(v * 1e6) / 1e6;
+                const keyXY = (x, y) => `${tolKey(x)},${tolKey(y)}`;
+
+                const nodeIdByKey = new Map();
+                for (let i = 0; i < nodes.length; i++) {
+                    const n = nodes[i];
+                    if (!n) continue;
+                    nodeIdByKey.set(keyXY(n.x, n.y), i + 1);
+                }
+
+                // 範囲内のx/y座標（節点由来）を列挙
+                const xs = new Set();
+                const ys = new Set();
+                for (const n of nodes) {
+                    if (!n) continue;
+                    if (n.x < xMin - 1e-9 || n.x > xMax + 1e-9) continue;
+                    if (n.y < yMin - 1e-9 || n.y > yMax + 1e-9) continue;
+                    xs.add(tolKey(n.x));
+                    ys.add(tolKey(n.y));
+                }
+                const xList = Array.from(xs).sort((a, b) => a - b);
+                const yList = Array.from(ys).sort((a, b) => a - b);
+                if (xList.length < 2 || yList.length < 2) {
+                    alert('耐力壁追加: 選択範囲内に格子（節点の列/段）が不足しています。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                const api = window.__shearWalls;
+                if (!api || typeof api.addShearWallRowWithNodes !== 'function') {
+                    alert('耐力壁追加: 耐力壁APIが初期化されていません。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                // 既存の耐力壁（同一四隅）を除外
+                const existing = new Set();
+                try {
+                    if (elements.shearWallsTable) {
+                        for (const r of Array.from(elements.shearWallsTable.rows)) {
+                            const ins = Array.from(r.querySelectorAll('input.shearwall-node'));
+                            if (ins.length >= 4) {
+                                const lb = parseInt(ins[0].value, 10);
+                                const lt = parseInt(ins[1].value, 10);
+                                const rb = parseInt(ins[2].value, 10);
+                                const rt = parseInt(ins[3].value, 10);
+                                if ([lb, lt, rb, rt].every(v => Number.isFinite(v) && v > 0)) {
+                                    existing.add(`${lb},${lt},${rb},${rt}`);
+                                }
+                            }
+                        }
+                    }
+                } catch (_) {}
+
+                let addedCount = 0;
+                for (let xi = 0; xi < xList.length - 1; xi++) {
+                    for (let yi = 0; yi < yList.length - 1; yi++) {
+                        const xL = xList[xi];
+                        const xR = xList[xi + 1];
+                        const yB = yList[yi];
+                        const yT = yList[yi + 1];
+
+                        const lb = nodeIdByKey.get(keyXY(xL, yB));
+                        const lt = nodeIdByKey.get(keyXY(xL, yT));
+                        const rb = nodeIdByKey.get(keyXY(xR, yB));
+                        const rt = nodeIdByKey.get(keyXY(xR, yT));
+                        if (!lb || !lt || !rb || !rt) continue;
+
+                        const k = `${lb},${lt},${rb},${rt}`;
+                        if (existing.has(k)) continue;
+                        existing.add(k);
+                        api.addShearWallRowWithNodes({ lb, lt, rb, rt });
+                        addedCount++;
+                    }
+                }
+
+                if (addedCount === 0) {
+                    alert('耐力壁追加: 追加できるパネルがありません（節点の配置を確認してください）。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                // 追加した耐力壁を即時にモデルへ反映して描画
+                if (api && typeof api.applyShearWallsToModel === 'function') {
+                    try { api.applyShearWallsToModel({ silent: true }); } catch (e) { console.warn('applyShearWallsToModel failed', e); }
+                }
+                resetShearWallAddState();
+            } catch (e) {
+                console.warn('耐力壁追加モードでエラー', e);
+                resetShearWallAddState();
+            }
+            return;
+        }
+
         if (canvasMode === 'addNode') {
             const targetMemberIndex = getMemberAt(mouseX, mouseY);
             let modelCoords = inverseTransform(mouseX, mouseY); if (!modelCoords) return;
@@ -11373,6 +11779,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         selectedMemberIndex = getMemberAt(mouseX, mouseY);
 
+        const selectedShearWallId = (loadedNodeIndex === -1 && selectedNodeIndex === -1 && selectedMemberIndex === -1)
+            ? getShearWallAt(mouseX, mouseY)
+            : null;
+        window.selectedShearWallId = selectedShearWallId;
+
         // window変数も同期
         window.selectedNodeIndex = selectedNodeIndex;
         window.selectedMemberIndex = selectedMemberIndex;
@@ -11422,11 +11833,62 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } else if (selectedNodeIndex !== -1) {
             console.log('💡 節点プロパティ編集表示 - 節点:', selectedNodeIndex + 1);
-            // 直接節点プロパティ編集を開く
-            openNodeEditor(selectedNodeIndex);
+            // 節点コンテキストメニューを表示（「プロパティを編集...」からポップアップを開く）
+            if (elements.nodeContextMenu) {
+                const menu = elements.nodeContextMenu;
+                menu.style.display = 'block';
+                menu.style.visibility = 'visible';
+                menu.style.position = 'fixed';
+                menu.style.zIndex = '100000';
+
+                // まず指定位置に仮配置してサイズ取得
+                let left = e.clientX;
+                let top = e.clientY;
+                menu.style.left = `${left}px`;
+                menu.style.top = `${top}px`;
+
+                const margin = 8;
+                const menuRect = menu.getBoundingClientRect();
+                if (left + menuRect.width > window.innerWidth - margin) {
+                    left = Math.max(margin, window.innerWidth - menuRect.width - margin);
+                }
+                if (top + menuRect.height > window.innerHeight - margin) {
+                    top = Math.max(margin, window.innerHeight - menuRect.height - margin);
+                }
+                if (left < margin) left = margin;
+                if (top < margin) top = margin;
+                menu.style.left = `${left}px`;
+                menu.style.top = `${top}px`;
+            } else {
+                // メニュー要素が無い場合のみフォールバックで直接編集
+                openNodeEditor(selectedNodeIndex);
+            }
         } else if (selectedMemberIndex !== -1) {
             console.log('💡 部材プロパティポップアップ表示開始 - 部材:', selectedMemberIndex + 1);
             const memberRow = elements.membersTable.rows[selectedMemberIndex];
+
+            // 耐力壁を構成する部材を右クリックした場合は、耐力壁プロパティ編集ポップアップを表示
+            try {
+                const wallId = memberRow?.dataset?.shearWallId;
+                if (wallId && window.__shearWalls && typeof window.__shearWalls.openShearWallPropsPopup === 'function') {
+                    window.__shearWalls.openShearWallPropsPopup(wallId);
+                    return;
+                }
+            } catch (e) {
+                console.warn('耐力壁プロパティ表示に失敗（フォールバックして部材ポップアップへ）', e);
+            }
+
+            // 部材ヒット判定に吸われた場合でも、クリック点が壁領域内なら耐力壁ポップアップを優先
+            try {
+                const wallIdByArea = getShearWallAt(mouseX, mouseY);
+                if (wallIdByArea && window.__shearWalls && typeof window.__shearWalls.openShearWallPropsPopup === 'function') {
+                    window.__shearWalls.openShearWallPropsPopup(wallIdByArea);
+                    return;
+                }
+            } catch (e) {
+                console.warn('壁領域フォールバック判定に失敗（部材ポップアップへ）', e);
+            }
+
             const e_select = memberRow.cells[3].querySelector('select'), e_input = memberRow.cells[3].querySelector('input[type="number"]');
             const currentE = (e_select.value === 'custom') ? e_input.value : e_select.value;
             
@@ -11745,9 +12207,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // ポップアップ表示時に、既に「剛」設定されているものは入力を無効化しておく
             try {
                 const piKx = document.getElementById('popup-i-spring-kx');
+                const piKxC = document.getElementById('popup-i-spring-kx-c');
                 const piKy = document.getElementById('popup-i-spring-ky');
                 const piKr = document.getElementById('popup-i-spring-kr');
                 const pjKx = document.getElementById('popup-j-spring-kx');
+                const pjKxC = document.getElementById('popup-j-spring-kx-c');
                 const pjKy = document.getElementById('popup-j-spring-ky');
                 const pjKr = document.getElementById('popup-j-spring-kr');
                 const piRKx = document.getElementById('popup-i-spring-rigid-kx');
@@ -11757,9 +12221,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 const pjRKy = document.getElementById('popup-j-spring-rigid-ky');
                 const pjRKr = document.getElementById('popup-j-spring-rigid-kr');
                 if (piKx && piRKx) piKx.disabled = !!piRKx.checked;
+                if (piKxC && piRKx) piKxC.disabled = !!piRKx.checked;
                 if (piKy && piRKy) piKy.disabled = !!piRKy.checked;
                 if (piKr && piRKr) piKr.disabled = !!piRKr.checked;
                 if (pjKx && pjRKx) pjKx.disabled = !!pjRKx.checked;
+                if (pjKxC && pjRKx) pjKxC.disabled = !!pjRKx.checked;
                 if (pjKy && pjRKy) pjKy.disabled = !!pjRKy.checked;
                 if (pjKr && pjRKr) pjKr.disabled = !!pjRKr.checked;
             } catch (e) {
@@ -11877,6 +12343,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 position: popup.style.position,
                 zIndex: popup.style.zIndex
             });
+        } else if (selectedShearWallId) {
+            // 耐力壁の領域（矩形）を右クリックした場合は、耐力壁プロパティ編集ポップアップを表示
+            try {
+                const api = window.__shearWalls;
+                if (api && typeof api.openShearWallPropsPopup === 'function') {
+                    api.openShearWallPropsPopup(selectedShearWallId);
+                    return;
+                }
+            } catch (e) {
+                console.warn('耐力壁領域の右クリックでプロパティ表示に失敗', e);
+            }
         } else {
             console.log('❌ クリック位置に節点・部材・荷重が見つかりませんでした');
         }
@@ -12308,9 +12785,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 const rowSpringBox = connCell ? connCell.querySelector('.spring-inputs') : null;
                 if (!rowSpringBox) return;
                 const rowKx = rowSpringBox.querySelector('.spring-kx');
+                const rowKxC = rowSpringBox.querySelector('.spring-kx-c');
                 const rowKy = rowSpringBox.querySelector('.spring-ky');
                 const rowKr = rowSpringBox.querySelector('.spring-kr');
                 const popupKx = document.getElementById(`${prefix}-spring-kx`);
+                const popupKxC = document.getElementById(`${prefix}-spring-kx-c`);
                 const popupKy = document.getElementById(`${prefix}-spring-ky`);
                 const popupKr = document.getElementById(`${prefix}-spring-kr`);
                 // コピー前に表示状態を明示的に更新（ポップアップ側の select が 'spring' のとき）
@@ -12323,6 +12802,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
                 if (popupKx && rowKx) rowKx.value = popupKx.value || '0';
+                if (rowKxC) {
+                    const v = (popupKxC ? (popupKxC.value || '') : '');
+                    rowKxC.value = (v !== '') ? v : (popupKx && popupKx.value ? popupKx.value : '0');
+                }
                 if (popupKy && rowKy) rowKy.value = popupKy.value || '0';
                 if (popupKr && rowKr) rowKr.value = popupKr.value || '0';
                 // 剛フラグを反映
@@ -12336,6 +12819,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     rowRKx.checked = !!popupRKx.checked;
                     // disable input if checked
                     if (rowKx) rowKx.disabled = rowRKx.checked;
+                    if (rowKxC) rowKxC.disabled = rowRKx.checked;
                     rowRKx.dispatchEvent(new Event('change'));
                 }
                 if (popupRKy && rowRKy) {
@@ -12350,6 +12834,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 // 入力値を書き換えたことを入力イベントで伝えておく（UIやparse時の観測のため）
                 if (rowKx) rowKx.dispatchEvent(new Event('input'));
+                if (rowKxC) rowKxC.dispatchEvent(new Event('input'));
                 if (rowKy) rowKy.dispatchEvent(new Event('input'));
                 if (rowKr) rowKr.dispatchEvent(new Event('input'));
             };
@@ -13187,10 +13672,19 @@ const createEInputHTML = (idPrefix, currentE = '205000') => {
                     <span style="font-size:9px; color:#888; transform:scale(0.9); transform-origin:left top;">(kN/mm)</span>
                 </div>
                 <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">
-                    <input class="spring-kx" type="number" min="0" step="0.01" value="0" style="width:45px; padding:1px; font-size:10px; border:1px solid #ccc; border-radius:2px;">
+                    <div style="display:flex; flex-direction:column; gap:2px; align-items:flex-end;">
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            <span style="font-size:9px; color:#666; min-width:24px; text-align:right;">引張</span>
+                            <input class="spring-kx" type="number" min="0" step="0.01" value="0" style="width:45px; padding:1px; font-size:10px; border:1px solid #ccc; border-radius:2px;">
+                        </div>
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            <span style="font-size:9px; color:#666; min-width:24px; text-align:right;">圧縮</span>
+                            <input class="spring-kx-c" type="number" min="0" step="0.01" value="0" style="width:45px; padding:1px; font-size:10px; border:1px solid #ccc; border-radius:2px;">
+                        </div>
+                    </div>
                     <label style="font-size:10px; display:flex; align-items:center; cursor:pointer; margin:0;">
                         <input type="checkbox" class="spring-rigid-kx" style="margin:0 4px 0 0; vertical-align:middle;" 
-                               onchange="this.closest('.spring-inputs').querySelector('.spring-kx').disabled = this.checked">剛
+                               onchange="var box=this.closest('.spring-inputs'); var a=box?box.querySelector('.spring-kx'):null; var b=box?box.querySelector('.spring-kx-c'):null; if(a) a.disabled=this.checked; if(b) b.disabled=this.checked;">剛
                     </label>
                 </div>
             </div>
@@ -15030,7 +15524,22 @@ const loadPreset = (index) => {
     // 4. 耐力壁（壁エレメント置換）
     // =====================================================================
     const initializeShearWallsFeature = () => {
-        if (!elements.shearWallsTable || !elements.addShearWallBtn || !elements.applyShearWallsBtn) return;
+        if (!elements.shearWallsTable || !elements.addShearWallBtn) return;
+
+        // 一覧表の入力変更で自動反映する（過剰更新を避けるためデバウンス）
+        let autoApplyTimer = null;
+        const scheduleAutoApply = (delayMs = 150) => {
+            try {
+                if (autoApplyTimer) clearTimeout(autoApplyTimer);
+            } catch (_) {}
+            autoApplyTimer = setTimeout(() => {
+                try {
+                    applyShearWallsToModel({ silent: true });
+                } catch (e) {
+                    console.warn('耐力壁: 自動反映でエラー', e);
+                }
+            }, delayMs);
+        };
 
         const SHEAR_WALL_TOL = 1e-6;
         const SHEAR_WALL_KAPPA = 1.5; // As = A/kappa と同等の仮定に合わせる
@@ -15041,6 +15550,39 @@ const loadPreset = (index) => {
         const parseNumber = (v, fallback = 0) => {
             const n = Number.parseFloat(v);
             return Number.isFinite(n) ? n : fallback;
+        };
+
+        const getDefaultSideColumnSectionProps = () => {
+            try {
+                const defaults = (typeof newMemberDefaults === 'object' && newMemberDefaults) ? newMemberDefaults : null;
+                if (!defaults) return null;
+
+                const I = parseNumber(defaults.I, NaN);
+                const A = parseNumber(defaults.A, NaN);
+                const Z = parseNumber(defaults.Z, NaN);
+                if (!Number.isFinite(I) || !Number.isFinite(A)) return null;
+
+                const sectionName = (defaults.sectionName !== undefined && defaults.sectionName !== null)
+                    ? String(defaults.sectionName)
+                    : '';
+                const axisLabel = (defaults.sectionAxis !== undefined && defaults.sectionAxis !== null)
+                    ? String(defaults.sectionAxis)
+                    : '';
+
+                return {
+                    E: String(defaults.E ?? '205000'),
+                    strengthValue: String(defaults.F ?? '235'),
+                    I: String(I),
+                    A: String(A),
+                    Z: Number.isFinite(Z) ? String(Z) : '',
+                    sectionName,
+                    selectedAxis: axisLabel,
+                    sectionInfo: defaults.sectionInfo || null,
+                    sectionAxis: axisLabel ? { label: axisLabel } : null
+                };
+            } catch (e) {
+                return null;
+            }
         };
 
         const getNodesFromTable = () => {
@@ -15085,7 +15627,7 @@ const loadPreset = (index) => {
             });
         };
 
-        const setSpringOnConnCell = (connCell, Kx_kN_per_m, { rigidKy = true, rigidKr = true } = {}) => {
+        const setSpringOnConnCell = (connCell, Kx, { rigidKy = true, rigidKr = true } = {}) => {
             if (!connCell) return;
             const select = connCell.querySelector('.conn-select');
             if (select) select.value = 'spring';
@@ -15095,17 +15637,26 @@ const loadPreset = (index) => {
             springBox.style.display = '';
 
             const kxInput = springBox.querySelector('.spring-kx');
+            const kxCInput = springBox.querySelector('.spring-kx-c');
             const kyInput = springBox.querySelector('.spring-ky');
             const krInput = springBox.querySelector('.spring-kr');
             const rigidKx = springBox.querySelector('.spring-rigid-kx');
             const rigidKyEl = springBox.querySelector('.spring-rigid-ky');
             const rigidKrEl = springBox.querySelector('.spring-rigid-kr');
 
+            const KxT_kN_per_m = (typeof Kx === 'number') ? Kx : (Kx && typeof Kx === 'object' ? (Kx.tension ?? Kx.Kx_tension ?? Kx.KxT ?? 0) : 0);
+            const KxC_kN_per_m = (typeof Kx === 'number') ? Kx : (Kx && typeof Kx === 'object' ? (Kx.compression ?? Kx.Kx_compression ?? Kx.KxC ?? KxT_kN_per_m) : KxT_kN_per_m);
+
             // UI単位: kN/mm（内部で×1000→kN/m）
-            const Kx_kN_per_mm = Number.isFinite(Kx_kN_per_m) ? (Kx_kN_per_m / 1000) : 0;
+            const KxT_kN_per_mm = Number.isFinite(KxT_kN_per_m) ? (KxT_kN_per_m / 1000) : 0;
+            const KxC_kN_per_mm = Number.isFinite(KxC_kN_per_m) ? (KxC_kN_per_m / 1000) : KxT_kN_per_mm;
             if (kxInput) {
                 kxInput.disabled = false;
-                kxInput.value = String(Kx_kN_per_mm);
+                kxInput.value = String(KxT_kN_per_mm);
+            }
+            if (kxCInput) {
+                kxCInput.disabled = false;
+                kxCInput.value = String(KxC_kN_per_mm);
             }
             if (rigidKx) rigidKx.checked = false;
 
@@ -15169,8 +15720,14 @@ const loadPreset = (index) => {
             // バネ設定
             try {
                 const connCells = newRow.querySelectorAll('.conn-cell');
-                if (springI && connCells && connCells[0]) setSpringOnConnCell(connCells[0], springI.Kx_kN_per_m, springI.options);
-                if (springJ && connCells && connCells[1]) setSpringOnConnCell(connCells[1], springJ.Kx_kN_per_m, springJ.options);
+                if (springI && connCells && connCells[0]) {
+                    const Kx = (springI.Kx !== undefined) ? springI.Kx : springI.Kx_kN_per_m;
+                    setSpringOnConnCell(connCells[0], Kx, springI.options);
+                }
+                if (springJ && connCells && connCells[1]) {
+                    const Kx = (springJ.Kx !== undefined) ? springJ.Kx : springJ.Kx_kN_per_m;
+                    setSpringOnConnCell(connCells[1], Kx, springJ.options);
+                }
             } catch (e) {
                 console.warn('耐力壁: バネ設定に失敗', e);
             }
@@ -15179,13 +15736,30 @@ const loadPreset = (index) => {
         };
 
         const renumberShearWallTable = () => {
+            if (!elements.shearWallsTable) return;
+            let maxId = 0;
             Array.from(elements.shearWallsTable.rows).forEach((row, idx) => {
                 const cell = row.cells[0];
                 if (cell) cell.textContent = String(idx + 1);
+
+                // プリセット読込などで dataset が欠けているケースのフォールバック
+                if (!row.dataset.shearWallId) {
+                    row.dataset.shearWallId = `SW${idx + 1}`;
+                }
+
+                // nextShearWallId を追随させる
+                const m = String(row.dataset.shearWallId || '').match(/^SW(\d+)$/i);
+                if (m) {
+                    const n = parseInt(m[1], 10);
+                    if (Number.isFinite(n)) maxId = Math.max(maxId, n);
+                }
             });
+            if (Number.isFinite(maxId) && maxId > 0) {
+                nextShearWallId = Math.max(nextShearWallId, maxId + 1);
+            }
         };
 
-        const applySectionToShearWallRow = (row, props) => {
+        const applySectionToShearWallRow = (row, props, options = {}) => {
             if (!row || !props) return;
             try {
                 row.dataset.sideColumnSectionProps = encodeURIComponent(JSON.stringify(props));
@@ -15199,6 +15773,9 @@ const loadPreset = (index) => {
             if (labelEl) {
                 labelEl.textContent = sectionName ? `${sectionName}${axis ? ' / ' + axis : ''}` : '-';
             }
+
+            // 断面が入ったら即時反映
+            if (!options.skipAutoApply) scheduleAutoApply();
         };
 
         const addShearWallRow = () => {
@@ -15221,16 +15798,40 @@ const loadPreset = (index) => {
             makeNodeCell(1); // 右上
 
             const upperOffCell = row.insertCell();
-            upperOffCell.innerHTML = `<input type="number" class="shearwall-off-upper" min="0" step="1" value="0">`;
+            upperOffCell.innerHTML = `<input type="number" class="shearwall-off-upper" min="0" step="1" value="50">`;
 
             const lowerOffCell = row.insertCell();
-            lowerOffCell.innerHTML = `<input type="number" class="shearwall-off-lower" min="0" step="1" value="0">`;
+            lowerOffCell.innerHTML = `<input type="number" class="shearwall-off-lower" min="0" step="1" value="50">`;
 
             const kShearCell = row.insertCell();
-            kShearCell.innerHTML = `<input type="number" class="shearwall-k-shear" min="0" step="1" value="0">`;
+            kShearCell.innerHTML = `
+                <div style="display:flex; flex-direction:column; gap:4px; width:100%; min-width:0; box-sizing:border-box;">
+                    <input type="number" class="shearwall-k-shear" min="0" step="1" value="0" style="width:100%; max-width:100%; min-width:0; box-sizing:border-box;">
+                    <label style="display:flex; align-items:flex-start; gap:4px; white-space:normal; line-height:1.2; margin:0;">
+                        <input type="checkbox" class="shearwall-k-shear-rigid" style="margin-top:2px;">
+                        <span>剛</span>
+                    </label>
+                </div>
+            `;
+            kShearCell.querySelector('.shearwall-k-shear-rigid')?.addEventListener('change', (e) => {
+                const input = kShearCell.querySelector('.shearwall-k-shear');
+                if (input) input.disabled = !!e.target.checked;
+            });
 
             const eiCell = row.insertCell();
-            eiCell.innerHTML = `<input type="number" class="shearwall-ei" min="0" step="1" value="0">`;
+            eiCell.innerHTML = `
+                <div style="display:flex; flex-direction:column; gap:4px; width:100%; min-width:0; box-sizing:border-box;">
+                    <input type="number" class="shearwall-ei" min="0" step="1" value="0" style="width:100%; max-width:100%; min-width:0; box-sizing:border-box;">
+                    <label style="display:flex; align-items:flex-start; gap:4px; white-space:normal; line-height:1.2; margin:0;">
+                        <input type="checkbox" class="shearwall-ei-rigid" style="margin-top:2px;">
+                        <span>剛</span>
+                    </label>
+                </div>
+            `;
+            eiCell.querySelector('.shearwall-ei-rigid')?.addEventListener('change', (e) => {
+                const input = eiCell.querySelector('.shearwall-ei');
+                if (input) input.disabled = !!e.target.checked;
+            });
 
             const sectionCell = row.insertCell();
             sectionCell.innerHTML = `
@@ -15242,7 +15843,18 @@ const loadPreset = (index) => {
 
             const makeSpringCell = () => {
                 const cell = row.insertCell();
-                cell.innerHTML = `<input type="number" class="shearwall-kx" min="0" step="1" value="0">`;
+                cell.innerHTML = `
+                    <div style="display:flex; flex-direction:column; gap:4px; width:100%; min-width:0; box-sizing:border-box;">
+                        <label style="display:flex; flex-direction:column; gap:2px; margin:0; white-space:normal;">
+                            <span style="font-size:12px; color:#666; line-height:1;">引張</span>
+                            <input type="number" class="shearwall-kx-t" min="0" step="1" value="0" style="width:100%; max-width:100%; min-width:0; box-sizing:border-box;">
+                        </label>
+                        <label style="display:flex; flex-direction:column; gap:2px; margin:0; white-space:normal;">
+                            <span style="font-size:12px; color:#666; line-height:1;">圧縮</span>
+                            <input type="number" class="shearwall-kx-c" min="0" step="1" value="0" style="width:100%; max-width:100%; min-width:0; box-sizing:border-box;">
+                        </label>
+                    </div>
+                `;
             };
             makeSpringCell(); // 左下
             makeSpringCell(); // 左上
@@ -15256,6 +15868,7 @@ const loadPreset = (index) => {
                     removeExistingWallMembers(wallId);
                     row.remove();
                     renumberShearWallTable();
+                    scheduleAutoApply();
                 }
             });
 
@@ -15279,6 +15892,7 @@ const loadPreset = (index) => {
                             if (data && data.targetMemberIndex === wallId && data.properties) {
                                 applySectionToShearWallRow(row, data.properties);
                                 localStorage.removeItem('steelSelectionForFrameAnalyzer');
+                                scheduleAutoApply();
                             }
                         } catch (e) {
                             console.error('耐力壁: 断面選択データの解析エラー', e);
@@ -15287,9 +15901,397 @@ const loadPreset = (index) => {
                 });
             }
 
+            // 側柱断面: デフォルト断面を自動セット（未設定扱いを防ぐ）
+            try {
+                if (!row.dataset.sideColumnSectionProps) {
+                    const defaults = getDefaultSideColumnSectionProps();
+                    if (defaults) applySectionToShearWallRow(row, defaults, { skipAutoApply: true });
+                }
+            } catch (_) {}
+
             renumberShearWallTable();
             return row;
         };
+
+        // 外部（キャンバス右クリック等）から呼べるようにAPIを公開
+        try {
+            window.__shearWalls = window.__shearWalls || {};
+            window.__shearWalls.addShearWallRow = addShearWallRow;
+            window.__shearWalls.addShearWallRowWithNodes = ({ lb, lt, rb, rt }) => {
+                const row = addShearWallRow();
+                const nodeInputs = Array.from(row.querySelectorAll('input.shearwall-node'));
+                if (nodeInputs.length >= 4) {
+                    nodeInputs[0].value = String(lb);
+                    nodeInputs[1].value = String(lt);
+                    nodeInputs[2].value = String(rb);
+                    nodeInputs[3].value = String(rt);
+                }
+                scheduleAutoApply();
+                return row;
+            };
+        } catch (e) {
+            console.warn('耐力壁API公開に失敗', e);
+        }
+
+        // 耐力壁プロパティ編集ポップアップ（表の行と同期）
+        const getShearWallRowById = (wallId) => {
+            if (!elements.shearWallsTable) return null;
+            return Array.from(elements.shearWallsTable.rows).find(r => r?.dataset?.shearWallId === wallId) || null;
+        };
+
+        const setPopupVisible = (popup, visible) => {
+            if (!popup) return;
+
+            // 念のため body 直下に移動（親要素の transform/overflow の影響回避）
+            try {
+                if (popup.parentElement !== document.body) {
+                    document.body.appendChild(popup);
+                }
+            } catch (_) {}
+
+            popup.style.display = visible ? 'block' : 'none';
+            popup.style.visibility = visible ? 'visible' : 'hidden';
+            popup.style.opacity = visible ? '1' : '0';
+            popup.style.pointerEvents = visible ? 'auto' : 'none';
+            popup.style.transform = 'none';
+            if (visible) {
+                popup.style.position = 'fixed';
+                popup.style.zIndex = '200000';
+
+                // CSS読み込み漏れ/上書き対策で最小サイズを確保
+                if (!popup.style.minWidth) popup.style.minWidth = '280px';
+                if (!popup.style.minHeight) popup.style.minHeight = '200px';
+
+                const rect = popup.getBoundingClientRect();
+                const w = rect.width || 520;
+                const h = rect.height || 420;
+                const margin = 10;
+
+                // 通常: iframe(非埋め込み)でも単体ページでも viewport 中央
+                let left = (window.innerWidth - w) / 2;
+                let top = (window.innerHeight - h) / 2;
+
+                // 埋め込み(iframe)時: iframe高さがコンテンツ全高に伸びるため innerHeight が巨大になり
+                // fixed の中央が画面外へ飛ぶ。親ウィンドウの viewport 中央に合わせて補正する。
+                try {
+                    const isEmbedded = document.body && document.body.classList.contains('embedded');
+                    if (isEmbedded && window.parent && window.parent !== window && window.frameElement) {
+                        const parentWin = window.parent;
+                        const frameRect = window.frameElement.getBoundingClientRect(); // parent viewport 座標
+                        const parentLeft = (parentWin.innerWidth - w) / 2;
+                        const parentTop = (parentWin.innerHeight - h) / 2;
+                        left = parentLeft - frameRect.left;
+                        top = parentTop - frameRect.top;
+                    }
+                } catch (_) {
+                    // cross-origin等は無視して通常計算
+                }
+
+                left = Math.max(margin, Math.min(left, window.innerWidth - w - margin));
+                top = Math.max(margin, Math.min(top, window.innerHeight - h - margin));
+                popup.style.left = `${left}px`;
+                popup.style.top = `${top}px`;
+            }
+        };
+
+        const openShearWallPropsPopup = (wallId) => {
+            const popup = elements.shearWallPropsPopup;
+            if (!popup) {
+                alert('耐力壁プロパティ編集ポップアップ要素が見つかりません。');
+                return;
+            }
+            const row = getShearWallRowById(wallId);
+            if (!row) {
+                alert(`耐力壁(${wallId}): 設定行が見つかりません。`);
+                return;
+            }
+
+            popup.dataset.shearWallId = wallId;
+            const idEl = document.getElementById('sw-props-id');
+            if (idEl) idEl.textContent = wallId;
+
+            const enabled = !!row.querySelector('.shearwall-enabled')?.checked;
+            const enabledEl = document.getElementById('sw-props-enabled');
+            if (enabledEl) enabledEl.checked = enabled;
+
+            const nodeInputs = Array.from(row.querySelectorAll('input.shearwall-node'));
+            const setNum = (id, v) => {
+                const el = document.getElementById(id);
+                if (el) el.value = String(v ?? '');
+            };
+            setNum('sw-props-lb', nodeInputs[0]?.value);
+            setNum('sw-props-lt', nodeInputs[1]?.value);
+            setNum('sw-props-rb', nodeInputs[2]?.value);
+            setNum('sw-props-rt', nodeInputs[3]?.value);
+
+            setNum('sw-props-off-upper', row.querySelector('.shearwall-off-upper')?.value);
+            setNum('sw-props-off-lower', row.querySelector('.shearwall-off-lower')?.value);
+
+            setNum('sw-props-k-shear', row.querySelector('.shearwall-k-shear')?.value);
+            const kRigid = !!row.querySelector('.shearwall-k-shear-rigid')?.checked;
+            const kRigidEl = document.getElementById('sw-props-k-shear-rigid');
+            const kInputEl = document.getElementById('sw-props-k-shear');
+            if (kRigidEl) kRigidEl.checked = kRigid;
+            if (kInputEl) kInputEl.disabled = kRigid;
+
+            setNum('sw-props-ei', row.querySelector('.shearwall-ei')?.value);
+            const eiRigid = !!row.querySelector('.shearwall-ei-rigid')?.checked;
+            const eiRigidEl = document.getElementById('sw-props-ei-rigid');
+            const eiInputEl = document.getElementById('sw-props-ei');
+            if (eiRigidEl) eiRigidEl.checked = eiRigid;
+            if (eiInputEl) eiInputEl.disabled = eiRigid;
+
+            const kxTInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t'));
+            const kxCInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c'));
+            setNum('sw-props-kx-lb-t', kxTInputs[0]?.value);
+            setNum('sw-props-kx-lb-c', kxCInputs[0]?.value);
+            setNum('sw-props-kx-lt-t', kxTInputs[1]?.value);
+            setNum('sw-props-kx-lt-c', kxCInputs[1]?.value);
+            setNum('sw-props-kx-rb-t', kxTInputs[2]?.value);
+            setNum('sw-props-kx-rb-c', kxCInputs[2]?.value);
+            setNum('sw-props-kx-rt-t', kxTInputs[3]?.value);
+            setNum('sw-props-kx-rt-c', kxCInputs[3]?.value);
+
+            // 剛チェックの連動
+            if (kRigidEl) {
+                kRigidEl.onchange = () => {
+                    const v = !!kRigidEl.checked;
+                    const input = document.getElementById('sw-props-k-shear');
+                    if (input) input.disabled = v;
+                };
+            }
+            if (eiRigidEl) {
+                eiRigidEl.onchange = () => {
+                    const v = !!eiRigidEl.checked;
+                    const input = document.getElementById('sw-props-ei');
+                    if (input) input.disabled = v;
+                };
+            }
+
+            setPopupVisible(popup, true);
+
+            // デバッグ: 実際に表示できているかをログで確認
+            try {
+                setTimeout(() => {
+                    const r = popup.getBoundingClientRect();
+                    const cs = window.getComputedStyle(popup);
+                    const cx = r.x + Math.max(1, r.width / 2);
+                    const cy = r.y + Math.max(1, r.height / 2);
+                    const el = document.elementFromPoint(cx, cy);
+                    let frameRectForDebug = null;
+                    let parentViewportForDebug = null;
+                    try {
+                        if (window.parent && window.parent !== window && window.frameElement) {
+                            const fr = window.frameElement.getBoundingClientRect();
+                            frameRectForDebug = { x: fr.x, y: fr.y, w: fr.width, h: fr.height };
+                            parentViewportForDebug = { w: window.parent.innerWidth, h: window.parent.innerHeight };
+                        }
+                    } catch (_) {}
+                    const state = {
+                        wallId,
+                        viewport: { w: window.innerWidth, h: window.innerHeight },
+                        parentViewport: parentViewportForDebug,
+                        frameRect: frameRectForDebug,
+                        style: {
+                            display: popup.style.display,
+                            visibility: popup.style.visibility,
+                            opacity: popup.style.opacity,
+                            pointerEvents: popup.style.pointerEvents,
+                            zIndex: popup.style.zIndex,
+                            left: popup.style.left,
+                            top: popup.style.top,
+                            minWidth: popup.style.minWidth,
+                            minHeight: popup.style.minHeight
+                        },
+                        computed: {
+                            display: cs.display,
+                            visibility: cs.visibility,
+                            opacity: cs.opacity,
+                            pointerEvents: cs.pointerEvents,
+                            zIndex: cs.zIndex,
+                            position: cs.position,
+                            width: cs.width,
+                            height: cs.height,
+                            backgroundColor: cs.backgroundColor
+                        },
+                        rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+                        topElementAtCenter: el ? { tag: el.tagName, id: el.id || '', className: el.className || '' } : null
+                    };
+                    console.log('🧱 耐力壁ポップアップ表示状態:', state);
+                    console.log('🧱 耐力壁ポップアップ表示状態(JSON):', JSON.stringify(state));
+                }, 0);
+
+                setTimeout(() => {
+                    const r = popup.getBoundingClientRect();
+                    const cs = window.getComputedStyle(popup);
+                    const cx = r.x + Math.max(1, r.width / 2);
+                    const cy = r.y + Math.max(1, r.height / 2);
+                    const el = document.elementFromPoint(cx, cy);
+                    let frameRectForDebug = null;
+                    let parentViewportForDebug = null;
+                    try {
+                        if (window.parent && window.parent !== window && window.frameElement) {
+                            const fr = window.frameElement.getBoundingClientRect();
+                            frameRectForDebug = { x: fr.x, y: fr.y, w: fr.width, h: fr.height };
+                            parentViewportForDebug = { w: window.parent.innerWidth, h: window.parent.innerHeight };
+                        }
+                    } catch (_) {}
+                    const state = {
+                        wallId,
+                        viewport: { w: window.innerWidth, h: window.innerHeight },
+                        parentViewport: parentViewportForDebug,
+                        frameRect: frameRectForDebug,
+                        style: {
+                            display: popup.style.display,
+                            visibility: popup.style.visibility,
+                            opacity: popup.style.opacity,
+                            pointerEvents: popup.style.pointerEvents,
+                            zIndex: popup.style.zIndex,
+                            left: popup.style.left,
+                            top: popup.style.top,
+                            minWidth: popup.style.minWidth,
+                            minHeight: popup.style.minHeight
+                        },
+                        computed: {
+                            display: cs.display,
+                            visibility: cs.visibility,
+                            opacity: cs.opacity,
+                            pointerEvents: cs.pointerEvents,
+                            zIndex: cs.zIndex,
+                            position: cs.position,
+                            width: cs.width,
+                            height: cs.height,
+                            backgroundColor: cs.backgroundColor
+                        },
+                        rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+                        topElementAtCenter: el ? { tag: el.tagName, id: el.id || '', className: el.className || '' } : null
+                    };
+                    console.log('🧱 (50ms後) 耐力壁ポップアップ表示状態:', state);
+                    console.log('🧱 (50ms後) 耐力壁ポップアップ表示状態(JSON):', JSON.stringify(state));
+                }, 50);
+            } catch (_) {}
+        };
+
+        const applyShearWallPropsFromPopup = () => {
+            const popup = elements.shearWallPropsPopup;
+            if (!popup) return;
+            const wallId = popup.dataset.shearWallId;
+            if (!wallId) return;
+            const row = getShearWallRowById(wallId);
+            if (!row) return;
+
+            const getVal = (id) => {
+                const el = document.getElementById(id);
+                return el ? el.value : '';
+            };
+            const getChecked = (id) => !!document.getElementById(id)?.checked;
+
+            const enabledEl = row.querySelector('.shearwall-enabled');
+            if (enabledEl) enabledEl.checked = getChecked('sw-props-enabled');
+
+            const nodeInputs = Array.from(row.querySelectorAll('input.shearwall-node'));
+            if (nodeInputs.length >= 4) {
+                nodeInputs[0].value = getVal('sw-props-lb');
+                nodeInputs[1].value = getVal('sw-props-lt');
+                nodeInputs[2].value = getVal('sw-props-rb');
+                nodeInputs[3].value = getVal('sw-props-rt');
+            }
+
+            const offUpper = row.querySelector('.shearwall-off-upper');
+            const offLower = row.querySelector('.shearwall-off-lower');
+            if (offUpper) offUpper.value = getVal('sw-props-off-upper');
+            if (offLower) offLower.value = getVal('sw-props-off-lower');
+
+            const kShear = row.querySelector('.shearwall-k-shear');
+            const kShearRigid = row.querySelector('.shearwall-k-shear-rigid');
+            const kRigid = getChecked('sw-props-k-shear-rigid');
+            if (kShearRigid) kShearRigid.checked = kRigid;
+            if (kShear) {
+                kShear.value = getVal('sw-props-k-shear');
+                kShear.disabled = kRigid;
+            }
+
+            const ei = row.querySelector('.shearwall-ei');
+            const eiRigidEl = row.querySelector('.shearwall-ei-rigid');
+            const eiRigid = getChecked('sw-props-ei-rigid');
+            if (eiRigidEl) eiRigidEl.checked = eiRigid;
+            if (ei) {
+                ei.value = getVal('sw-props-ei');
+                ei.disabled = eiRigid;
+            }
+
+            const kxTInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t'));
+            const kxCInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c'));
+            if (kxTInputs.length >= 4 && kxCInputs.length >= 4) {
+                kxTInputs[0].value = getVal('sw-props-kx-lb-t');
+                kxCInputs[0].value = getVal('sw-props-kx-lb-c');
+                kxTInputs[1].value = getVal('sw-props-kx-lt-t');
+                kxCInputs[1].value = getVal('sw-props-kx-lt-c');
+                kxTInputs[2].value = getVal('sw-props-kx-rb-t');
+                kxCInputs[2].value = getVal('sw-props-kx-rb-c');
+                kxTInputs[3].value = getVal('sw-props-kx-rt-t');
+                kxCInputs[3].value = getVal('sw-props-kx-rt-c');
+            }
+
+            // 必要に応じて再描画
+            if (typeof drawOnCanvas === 'function') drawOnCanvas();
+
+            // ポップアップで編集した内容も即時反映
+            scheduleAutoApply();
+        };
+
+        // UIイベント
+        try {
+            const popup = elements.shearWallPropsPopup;
+            const closeBtn = document.getElementById('sw-props-close');
+            const applyBtn = document.getElementById('sw-props-apply');
+            if (closeBtn && popup) closeBtn.addEventListener('click', () => setPopupVisible(popup, false));
+            if (applyBtn) applyBtn.addEventListener('click', () => applyShearWallPropsFromPopup());
+        } catch (e) {
+            console.warn('耐力壁プロパティポップアップのイベント登録に失敗', e);
+        }
+
+        // 耐力壁（壁エレメント置換）: 行を右クリックしたらプロパティ編集を開く
+        try {
+            const table = document.getElementById('shear-walls-table');
+            if (table) {
+                table.addEventListener('contextmenu', (e) => {
+                    const target = e?.target;
+                    if (!target) return;
+                    if (target.closest && target.closest('.delete-row-btn')) return;
+                    const tr = target.closest ? target.closest('tr') : null;
+                    if (!tr) return;
+                    // ヘッダ行は除外
+                    if (tr.parentElement && tr.parentElement.tagName && tr.parentElement.tagName.toLowerCase() === 'thead') return;
+
+                    // dataset が無い場合は行番号から補完
+                    let wallId = tr?.dataset?.shearWallId;
+                    if (!wallId && elements.shearWallsTable) {
+                        const rows = Array.from(elements.shearWallsTable.rows);
+                        const idx = rows.indexOf(tr);
+                        if (idx >= 0) {
+                            wallId = `SW${idx + 1}`;
+                            tr.dataset.shearWallId = wallId;
+                        }
+                    }
+                    if (!wallId) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('🧱 耐力壁テーブル右クリック:', { wallId });
+                    openShearWallPropsPopup(wallId);
+                }, true);
+            }
+        } catch (e) {
+            console.warn('耐力壁: 右クリックでプロパティを開く処理の登録に失敗', e);
+        }
+
+        // 外部（キャンバス右クリック等）から呼べるように公開
+        try {
+            window.__shearWalls = window.__shearWalls || {};
+            window.__shearWalls.openShearWallPropsPopup = openShearWallPropsPopup;
+        } catch (e) {
+            console.warn('耐力壁プロパティAPI公開に失敗', e);
+        }
 
         const parseSideColumnSectionProps = (row) => {
             try {
@@ -15301,7 +16303,13 @@ const loadPreset = (index) => {
             }
         };
 
-        const applyShearWallsToModel = () => {
+        const applyShearWallsToModel = (options = {}) => {
+            const silent = !!options.silent;
+            const warnOrAlert = (msg) => {
+                if (silent) console.warn(msg);
+                else alert(msg);
+            };
+
             const rows = Array.from(elements.shearWallsTable.rows);
             for (const row of rows) {
                 const nodeList = getNodesFromTable();
@@ -15316,9 +16324,6 @@ const loadPreset = (index) => {
                     continue;
                 }
 
-                // 既存の同ID生成部材は削除（節点は残す）
-                removeExistingWallMembers(wallId);
-
                 const nodeInputs = Array.from(row.querySelectorAll('input.shearwall-node'));
                 if (nodeInputs.length < 4) continue;
                 const lb = parseInt(nodeInputs[0].value, 10);
@@ -15331,7 +16336,7 @@ const loadPreset = (index) => {
                 const nRB = nodeById(rb);
                 const nRT = nodeById(rt);
                 if (!nLB || !nLT || !nRB || !nRT) {
-                    alert(`耐力壁(${wallId}): 指定した節点番号が無効です。`);
+                    warnOrAlert(`耐力壁(${wallId}): 指定した節点番号が無効です。`);
                     continue;
                 }
 
@@ -15347,7 +16352,7 @@ const loadPreset = (index) => {
                     Math.abs(nLT.y - nRT.y) <= 1e-3;
 
                 if (!isRect) {
-                    alert(`耐力壁(${wallId}): 指定4点が矩形（左右鉛直・上下水平）になっていません。`);
+                    warnOrAlert(`耐力壁(${wallId}): 指定4点が矩形（左右鉛直・上下水平）になっていません。`);
                     continue;
                 }
 
@@ -15356,15 +16361,46 @@ const loadPreset = (index) => {
                 const yUpper = yT - offUpperMm / 1000;
                 const yLower = yB + offLowerMm / 1000;
                 if (!(yUpper > yLower + 1e-6)) {
-                    alert(`耐力壁(${wallId}): 上下オフセットにより置換柱の高さが成立しません。`);
+                    warnOrAlert(`耐力壁(${wallId}): 上下オフセットにより置換柱の高さが成立しません。`);
                     continue;
                 }
 
-                const sideSection = parseSideColumnSectionProps(row);
+                let sideSection = parseSideColumnSectionProps(row);
+                // 断面選択直後に反映ボタンが押された場合など、dataset への反映が間に合っていないケースに備えて
+                // localStorage の最新選択を wallId に一致するものだけ取り込む。
+                if (!sideSection) {
+                    try {
+                        const storedData = localStorage.getItem('steelSelectionForFrameAnalyzer');
+                        if (storedData) {
+                            const data = JSON.parse(storedData);
+                            if (data && data.targetMemberIndex === wallId && data.properties) {
+                                applySectionToShearWallRow(row, data.properties);
+                                localStorage.removeItem('steelSelectionForFrameAnalyzer');
+                                sideSection = parseSideColumnSectionProps(row);
+                            }
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+                }
+
+                // デフォルト断面（新規部材追加の既定値）でフォールバック
+                if (!sideSection) {
+                    try {
+                        const defaults = getDefaultSideColumnSectionProps();
+                        if (defaults) {
+                            applySectionToShearWallRow(row, defaults, { skipAutoApply: true });
+                            sideSection = parseSideColumnSectionProps(row);
+                        }
+                    } catch (_) {}
+                }
                 if (!sideSection || !Number.isFinite(Number(sideSection.I)) || !Number.isFinite(Number(sideSection.A))) {
-                    alert(`耐力壁(${wallId}): 側柱断面が未設定です（断面選択を行ってください）。`);
+                    warnOrAlert(`耐力壁(${wallId}): 側柱断面が未設定です（断面選択を行ってください）。`);
                     continue;
                 }
+
+                // ここまで来たら妥当な入力が揃っているので、既存の同ID生成部材は削除して作り直す（節点は残す）
+                removeExistingWallMembers(wallId);
 
                 const sideE = String(sideSection.E || '205000');
                 const sideF = String(sideSection.strengthValue || sideSection.F || '235');
@@ -15374,14 +16410,17 @@ const loadPreset = (index) => {
                 const sideName = sideSection.sectionName || sideSection.sectionLabel || '側柱';
                 const sideAxisLabel = sideSection.selectedAxis || sideSection.sectionAxisLabel || (sideSection.sectionAxis ? sideSection.sectionAxis.label : '') || '';
 
-                // ばね軸剛性（kN/m）
-                const kxInputs = Array.from(row.querySelectorAll('input.shearwall-kx'));
-                const Kx_LB = parseNumber(kxInputs[0]?.value, 0);
-                const Kx_LT = parseNumber(kxInputs[1]?.value, 0);
-                const Kx_RB = parseNumber(kxInputs[2]?.value, 0);
-                const Kx_RT = parseNumber(kxInputs[3]?.value, 0);
+                // ばね軸剛性（kN/m） 引張/圧縮別
+                const kxTInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t'));
+                const kxCInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c'));
+                const springLB = { tension: parseNumber(kxTInputs[0]?.value, 0), compression: parseNumber(kxCInputs[0]?.value, parseNumber(kxTInputs[0]?.value, 0)) };
+                const springLT = { tension: parseNumber(kxTInputs[1]?.value, 0), compression: parseNumber(kxCInputs[1]?.value, parseNumber(kxTInputs[1]?.value, 0)) };
+                const springRB = { tension: parseNumber(kxTInputs[2]?.value, 0), compression: parseNumber(kxCInputs[2]?.value, parseNumber(kxTInputs[2]?.value, 0)) };
+                const springRT = { tension: parseNumber(kxTInputs[3]?.value, 0), compression: parseNumber(kxCInputs[3]?.value, parseNumber(kxTInputs[3]?.value, 0)) };
 
                 // 置換柱
+                const kShearRigid = !!row.querySelector('.shearwall-k-shear-rigid')?.checked;
+                const eiRigid = !!row.querySelector('.shearwall-ei-rigid')?.checked;
                 const kShear = parseNumber(row.querySelector('.shearwall-k-shear')?.value, 0); // kN/m と解釈
                 const EI = parseNumber(row.querySelector('.shearwall-ei')?.value, 0); // kN・m^2 と解釈
 
@@ -15409,7 +16448,7 @@ const loadPreset = (index) => {
                     sectionAxis: sideAxisLabel,
                     shearWallId: wallId,
                     shearWallRole: 'side-left-bottom',
-                    springI: { Kx_kN_per_m: Kx_LB, options: { rigidKy: true, rigidKr: true } },
+                    springI: { Kx: springLB, options: { rigidKy: true, rigidKr: true } },
                     sectionInfo: sideSection.sectionInfo || null,
                     sectionAxisObj: sideSection.sectionAxis || null
                 });
@@ -15444,7 +16483,7 @@ const loadPreset = (index) => {
                     sectionAxis: sideAxisLabel,
                     shearWallId: wallId,
                     shearWallRole: 'side-left-top',
-                    springJ: { Kx_kN_per_m: Kx_LT, options: { rigidKy: true, rigidKr: true } },
+                    springJ: { Kx: springLT, options: { rigidKy: true, rigidKr: true } },
                     sectionInfo: sideSection.sectionInfo || null,
                     sectionAxisObj: sideSection.sectionAxis || null
                 });
@@ -15464,7 +16503,7 @@ const loadPreset = (index) => {
                     sectionAxis: sideAxisLabel,
                     shearWallId: wallId,
                     shearWallRole: 'side-right-bottom',
-                    springI: { Kx_kN_per_m: Kx_RB, options: { rigidKy: true, rigidKr: true } },
+                    springI: { Kx: springRB, options: { rigidKy: true, rigidKr: true } },
                     sectionInfo: sideSection.sectionInfo || null,
                     sectionAxisObj: sideSection.sectionAxis || null
                 });
@@ -15499,7 +16538,7 @@ const loadPreset = (index) => {
                     sectionAxis: sideAxisLabel,
                     shearWallId: wallId,
                     shearWallRole: 'side-right-top',
-                    springJ: { Kx_kN_per_m: Kx_RT, options: { rigidKy: true, rigidKr: true } },
+                    springJ: { Kx: springRT, options: { rigidKy: true, rigidKr: true } },
                     sectionInfo: sideSection.sectionInfo || null,
                     sectionAxisObj: sideSection.sectionAxis || null
                 });
@@ -15580,10 +16619,18 @@ const loadPreset = (index) => {
                 const replaceE_kN_m2 = replaceE_Nmm2 * 1000;
                 const replaceG_kN_m2 = replaceE_kN_m2 / (2 * (1 + SHEAR_WALL_NU));
                 const replaceL = Math.abs(yUpper - yLower);
-                const replaceI_m4 = (EI > 0) ? (EI / replaceE_kN_m2) : 1e-10;
-                const replaceA_m2 = (kShear > 0 && replaceG_kN_m2 > 0 && replaceL > 1e-9)
+                let replaceI_m4 = (EI > 0) ? (EI / replaceE_kN_m2) : 1e-10;
+                let replaceA_m2 = (kShear > 0 && replaceG_kN_m2 > 0 && replaceL > 1e-9)
                     ? ((kShear * replaceL * SHEAR_WALL_KAPPA) / replaceG_kN_m2)
                     : 1e-6;
+
+                // 「剛」指定の場合は非常に大きい断面特性に置換（入力値は無視）
+                if (eiRigid) {
+                    replaceI_m4 = Math.max(1e-4, sideI_m4 * 1e6);
+                }
+                if (kShearRigid) {
+                    replaceA_m2 = Math.max(1e-2, sideA_m2 * 1e6);
+                }
 
                 addMemberRow({
                     iNode: lowerMid,
@@ -15621,12 +16668,37 @@ const loadPreset = (index) => {
             }
         };
 
+        // applyShearWallsToModel 定義後に公開（const の巻き上げが無いので順序を保証）
+        try {
+            window.__shearWalls = window.__shearWalls || {};
+            window.__shearWalls.applyShearWallsToModel = applyShearWallsToModel;
+        } catch (e) {
+            console.warn('耐力壁 applyShearWallsToModel のAPI公開に失敗', e);
+        }
+
         // UIイベント
         elements.addShearWallBtn.addEventListener('click', () => addShearWallRow());
-        elements.applyShearWallsBtn.addEventListener('click', () => applyShearWallsToModel());
+
+        // 一覧表の入力が変わったら即反映（入力途中の連打を避けてデバウンス）
+        try {
+            const onTableEdit = (e) => {
+                const t = e?.target;
+                if (!t) return;
+                // 耐力壁テーブル内の編集だけ拾う
+                if (!t.closest || !t.closest('#shear-walls-table')) return;
+                scheduleAutoApply();
+            };
+            elements.shearWallsTable.addEventListener('input', onTableEdit);
+            elements.shearWallsTable.addEventListener('change', onTableEdit);
+        } catch (e) {
+            console.warn('耐力壁: 自動反映イベント登録に失敗', e);
+        }
 
         // 初期行（空テーブルの場合）
         if (elements.shearWallsTable.rows.length === 0) addShearWallRow();
+
+        // 初期状態を反映（入力が揃っている場合は描画される）
+        scheduleAutoApply(0);
     };
 
     // 初期化（既存UI初期化と干渉しないように遅延）
@@ -16899,6 +17971,12 @@ const loadPreset = (index) => {
                 const data = JSON.parse(e.newValue);
                 console.log('[storage event] steelSelectionForFrameAnalyzer received:', data);
                 if (data && data.targetMemberIndex !== undefined && data.properties) {
+                    // 耐力壁などの「文字列ID」(例: SW1 / add-temp-...) は、各機能側のポーリング処理で適用する。
+                    // ここで消費してしまうと、該当UIが localStorage を読めず反映できなくなるため無視する。
+                    if (typeof data.targetMemberIndex === 'string' && data.targetMemberIndex !== 'bulk' && data.targetMemberIndex !== 'addDefaults') {
+                        console.log('[storage event] skip string targetMemberIndex (handled by feature-specific poller):', data.targetMemberIndex);
+                        return;
+                    }
                     if (data.targetMemberIndex === 'bulk') {
                         window.bulkSectionProperties = data.properties;
                         if (typeof updateBulkSectionInfo === 'function') {
@@ -18373,68 +19451,76 @@ const loadPreset = (index) => {
                     const jConnCell = jConnSelEl ? (jConnSelEl.closest('.conn-cell') || jConnSelEl.parentElement) : null;
 
                     const piKx = document.getElementById('popup-i-spring-kx');
+                    const piKxC = document.getElementById('popup-i-spring-kx-c');
                     const piKy = document.getElementById('popup-i-spring-ky');
                     const piKr = document.getElementById('popup-i-spring-kr');
                     if (iConnCell) {
                         const iSpringBox = iConnCell.querySelector('.spring-inputs');
                         if (iSpringBox) {
                             const kx = iSpringBox.querySelector('.spring-kx')?.value || '0';
+                            const kxC = iSpringBox.querySelector('.spring-kx-c')?.value || kx || '0';
                             const ky = iSpringBox.querySelector('.spring-ky')?.value || '0';
                             const kr = iSpringBox.querySelector('.spring-kr')?.value || '0';
                             const rKx = iSpringBox.querySelector('.spring-rigid-kx')?.checked || false;
                             const rKy = iSpringBox.querySelector('.spring-rigid-ky')?.checked || false;
                             const rKr = iSpringBox.querySelector('.spring-rigid-kr')?.checked || false;
                             if (piKx) piKx.value = kx;
+                            if (piKxC) piKxC.value = kxC;
                             if (piKy) piKy.value = ky;
                             if (piKr) piKr.value = kr;
                             const piRKx = document.getElementById('popup-i-spring-rigid-kx');
                             const piRKy = document.getElementById('popup-i-spring-rigid-ky');
                             const piRKr = document.getElementById('popup-i-spring-rigid-kr');
-                            if (piRKx) { piRKx.checked = rKx; if (piKx) piKx.disabled = rKx; }
+                            if (piRKx) { piRKx.checked = rKx; if (piKx) piKx.disabled = rKx; if (piKxC) piKxC.disabled = rKx; }
                             if (piRKy) { piRKy.checked = rKy; if (piKy) piKy.disabled = rKy; }
                             if (piRKr) { piRKr.checked = rKr; if (piKr) piKr.disabled = rKr; }
                         } else {
                             if (piKx) piKx.value = '0';
+                            if (piKxC) piKxC.value = '0';
                             if (piKy) piKy.value = '0';
                             if (piKr) piKr.value = '0';
                             const piRKx = document.getElementById('popup-i-spring-rigid-kx');
                             const piRKy = document.getElementById('popup-i-spring-rigid-ky');
                             const piRKr = document.getElementById('popup-i-spring-rigid-kr');
-                            if (piRKx) { piRKx.checked = false; if (piKx) piKx.disabled = false; }
+                            if (piRKx) { piRKx.checked = false; if (piKx) piKx.disabled = false; if (piKxC) piKxC.disabled = false; }
                             if (piRKy) { piRKy.checked = false; if (piKy) piKy.disabled = false; }
                             if (piRKr) { piRKr.checked = false; if (piKr) piKr.disabled = false; }
                         }
                     }
 
                     const pjKx = document.getElementById('popup-j-spring-kx');
+                    const pjKxC = document.getElementById('popup-j-spring-kx-c');
                     const pjKy = document.getElementById('popup-j-spring-ky');
                     const pjKr = document.getElementById('popup-j-spring-kr');
                     if (jConnCell) {
                         const jSpringBox = jConnCell.querySelector('.spring-inputs');
                         if (jSpringBox) {
                             const kx = jSpringBox.querySelector('.spring-kx')?.value || '0';
+                            const kxC = jSpringBox.querySelector('.spring-kx-c')?.value || kx || '0';
                             const ky = jSpringBox.querySelector('.spring-ky')?.value || '0';
                             const kr = jSpringBox.querySelector('.spring-kr')?.value || '0';
                             const rKx = jSpringBox.querySelector('.spring-rigid-kx')?.checked || false;
                             const rKy = jSpringBox.querySelector('.spring-rigid-ky')?.checked || false;
                             const rKr = jSpringBox.querySelector('.spring-rigid-kr')?.checked || false;
                             if (pjKx) pjKx.value = kx;
+                            if (pjKxC) pjKxC.value = kxC;
                             if (pjKy) pjKy.value = ky;
                             if (pjKr) pjKr.value = kr;
                             const pjRKx = document.getElementById('popup-j-spring-rigid-kx');
                             const pjRKy = document.getElementById('popup-j-spring-rigid-ky');
                             const pjRKr = document.getElementById('popup-j-spring-rigid-kr');
-                            if (pjRKx) { pjRKx.checked = rKx; if (pjKx) pjKx.disabled = rKx; }
+                            if (pjRKx) { pjRKx.checked = rKx; if (pjKx) pjKx.disabled = rKx; if (pjKxC) pjKxC.disabled = rKx; }
                             if (pjRKy) { pjRKy.checked = rKy; if (pjKy) pjKy.disabled = rKy; }
                             if (pjRKr) { pjRKr.checked = rKr; if (pjKr) pjKr.disabled = rKr; }
                         } else {
                             if (pjKx) pjKx.value = '0';
+                            if (pjKxC) pjKxC.value = '0';
                             if (pjKy) pjKy.value = '0';
                             if (pjKr) pjKr.value = '0';
                             const pjRKx = document.getElementById('popup-j-spring-rigid-kx');
                             const pjRKy = document.getElementById('popup-j-spring-rigid-ky');
                             const pjRKr = document.getElementById('popup-j-spring-rigid-kr');
-                            if (pjRKx) { pjRKx.checked = false; if (pjKx) pjKx.disabled = false; }
+                            if (pjRKx) { pjRKx.checked = false; if (pjKx) pjKx.disabled = false; if (pjKxC) pjKxC.disabled = false; }
                             if (pjRKy) { pjRKy.checked = false; if (pjKy) pjKy.disabled = false; }
                             if (pjRKr) { pjRKr.checked = false; if (pjKr) pjKr.disabled = false; }
                         }
@@ -18460,9 +19546,11 @@ const loadPreset = (index) => {
                     // 表示時に剛フラグがある入力を無効化
                     try {
                         const piKx = document.getElementById('popup-i-spring-kx');
+                        const piKxC = document.getElementById('popup-i-spring-kx-c');
                         const piKy = document.getElementById('popup-i-spring-ky');
                         const piKr = document.getElementById('popup-i-spring-kr');
                         const pjKx = document.getElementById('popup-j-spring-kx');
+                        const pjKxC = document.getElementById('popup-j-spring-kx-c');
                         const pjKy = document.getElementById('popup-j-spring-ky');
                         const pjKr = document.getElementById('popup-j-spring-kr');
                         const piRKx = document.getElementById('popup-i-spring-rigid-kx');
@@ -18472,9 +19560,11 @@ const loadPreset = (index) => {
                         const pjRKy = document.getElementById('popup-j-spring-rigid-ky');
                         const pjRKr = document.getElementById('popup-j-spring-rigid-kr');
                         if (piKx && piRKx) piKx.disabled = !!piRKx.checked;
+                        if (piKxC && piRKx) piKxC.disabled = !!piRKx.checked;
                         if (piKy && piRKy) piKy.disabled = !!piRKy.checked;
                         if (piKr && piRKr) piKr.disabled = !!piRKr.checked;
                         if (pjKx && pjRKx) pjKx.disabled = !!pjRKx.checked;
+                        if (pjKxC && pjRKx) pjKxC.disabled = !!pjRKx.checked;
                         if (pjKy && pjRKy) pjKy.disabled = !!pjRKy.checked;
                         if (pjKr && pjRKr) pjKr.disabled = !!pjRKr.checked;
                     } catch (e) { console.warn('popup init disable error', e); }

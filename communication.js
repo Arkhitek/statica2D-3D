@@ -30,7 +30,15 @@ function openSteelSelector(memberIndex, currentProps = {}) {
                     ? window.location.pathname
                     : '';
                 // 2Dフォルダ配下からでも、ルート側の共通HTMLを開けるようにする
-                if (pathname.includes('/2D構造解析/')) return `../${fileName}`;
+                // 例: location.pathname は日本語を %E6... にエンコードした形式で返ることがある
+                const decodedPathname = (() => {
+                    try { return decodeURIComponent(pathname); } catch { return pathname; }
+                })();
+                const folderName = '2D構造解析';
+                const encodedFolderName = encodeURIComponent(folderName);
+                if (decodedPathname.includes(`/${folderName}/`) || pathname.includes(`/${encodedFolderName}/`)) {
+                    return `../${fileName}`;
+                }
             } catch (e) {
                 // ignore
             }
@@ -115,7 +123,8 @@ function sendDataToParent(properties) {
                 if (trimmed.toLowerCase() === 'bulk') return 'bulk';
                 if (trimmed.toLowerCase() === 'adddefaults') return 'addDefaults';
                 const numeric = parseInt(trimmed, 10);
-                return Number.isNaN(numeric) ? null : numeric;
+                // 数値にできない場合は、耐力壁などの識別子（例: SW1, add-temp-1-2）として扱う
+                return Number.isNaN(numeric) ? trimmed : numeric;
             }
             return null;
         };
@@ -160,8 +169,8 @@ function sendDataToParent(properties) {
         if (typeof dataToSend.targetMemberIndex === 'number' && !Number.isFinite(dataToSend.targetMemberIndex)) {
             throw new Error('部材インデックスが数値ではありません');
         }
-        if (typeof dataToSend.targetMemberIndex !== 'number' && dataToSend.targetMemberIndex !== 'bulk' && dataToSend.targetMemberIndex !== 'addDefaults') {
-            throw new Error('部材インデックスが数値ではありません');
+        if (typeof dataToSend.targetMemberIndex !== 'number' && typeof dataToSend.targetMemberIndex !== 'string' && dataToSend.targetMemberIndex !== 'bulk' && dataToSend.targetMemberIndex !== 'addDefaults') {
+            throw new Error('部材インデックスの形式が不正です');
         }
         
         // localStorageにデータを保存
