@@ -967,6 +967,18 @@ body.model-fullscreen-active #model-canvas-container canvas {
     min-width: 520px;
     max-width: calc(100vw - 40px);
 }
+
+/* 横長の耐力壁プロパティポップアップ用スタイル */
+.popup-box.shear-wall-props-popup-wide {
+    width: 920px;
+    min-width: 680px;
+    max-width: calc(100vw - 40px);
+}
+.popup-box.shear-wall-props-popup-wide input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 120px;
+}
 .popup-box.member-props-popup-wide .props-grid {
     grid-template-columns: 140px 1fr 140px 1fr; /* 2列×2で横並びに配置 */
     gap: 12px;

@@ -1911,6 +1911,93 @@ document.addEventListener('DOMContentLoaded', () => {
     // Make elements object globally accessible
     window.elements = elements;
 
+    // --- 追加: ポップアップを「見えている領域の中央」に出すための座標計算 ---
+    // 統合版(iframe埋め込み)では iframe 自体が非常に縦長になり、window.innerHeight が巨大値になることがある。
+    // その場合、iframe内の fixed 要素を中央に出すには「親ウィンドウの表示領域中心」を iframe 座標に変換して使う。
+    const getVisibleViewportBoundsInThisWindow = () => {
+        const isEmbedded = document.body && document.body.classList && document.body.classList.contains('embedded');
+        try {
+            if (isEmbedded && window.frameElement && window.parent && window.parent !== window) {
+                const iframeRect = window.frameElement.getBoundingClientRect(); // parent viewport座標
+                const parentW = window.parent.innerWidth || document.documentElement.clientWidth;
+                const parentH = window.parent.innerHeight || document.documentElement.clientHeight;
+
+                // 親viewportとiframe矩形の交差領域（＝実際に見えているiframe領域）
+                const visLeftInParent = Math.max(0, iframeRect.left);
+                const visRightInParent = Math.min(parentW, iframeRect.right);
+                const visTopInParent = Math.max(0, iframeRect.top);
+                const visBottomInParent = Math.min(parentH, iframeRect.bottom);
+
+                const left = visLeftInParent - iframeRect.left;
+                const right = visRightInParent - iframeRect.left;
+                const top = visTopInParent - iframeRect.top;
+                const bottom = visBottomInParent - iframeRect.top;
+
+                const width = Math.max(0, right - left);
+                const height = Math.max(0, bottom - top);
+
+                // 交差が取れない状況のフォールバック
+                if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+                    const w = window.innerWidth;
+                    const h = Math.min(window.innerHeight, document.documentElement.clientHeight || window.innerHeight);
+                    return { left: 0, top: 0, right: w, bottom: h, width: w, height: h };
+                }
+                return { left, top, right, bottom, width, height };
+            }
+        } catch (e) {
+            // フォールバック
+        }
+        const w = window.innerWidth;
+        const h = Math.min(window.innerHeight, document.documentElement.clientHeight || window.innerHeight);
+        return { left: 0, top: 0, right: w, bottom: h, width: w, height: h };
+    };
+
+    const getVisibleCenterInThisWindow = () => {
+        const viewport = getVisibleViewportBoundsInThisWindow();
+        const x = viewport.left + viewport.width / 2;
+        const y = viewport.top + viewport.height / 2;
+        return { x, y, viewportW: viewport.width, viewportH: viewport.height, viewport };
+    };
+
+    // --- 追加: 「部材追加」ボタンで部材追加設定ポップアップを必ず表示 ---
+    // 初期化の後半で例外が起きても、この表示だけは動くように早めに配線しておく。
+    const openAddMemberPopupBasic = () => {
+        const popup = elements.addMemberPopup || document.getElementById('add-member-popup');
+        if (!popup) return;
+
+        // まず表示（サイズ計測のため）
+        popup.style.display = 'block';
+        popup.style.position = 'fixed';
+        popup.style.visibility = 'hidden';
+        popup.style.zIndex = '99999';
+
+        // 中央寄せ（埋め込み時は親の表示領域中心に合わせる）
+        const rect = popup.getBoundingClientRect();
+        const popupWidth = rect.width || 380;
+        const popupHeight = rect.height || 400;
+        const minMargin = 20;
+        const center = getVisibleCenterInThisWindow();
+        const v = center.viewport || { left: 0, top: 0, right: center.viewportW, bottom: center.viewportH };
+        const left = Math.max(v.left + minMargin, Math.min(v.right - popupWidth - minMargin, center.x - popupWidth / 2));
+        const top = Math.max(v.top + minMargin, Math.min(v.bottom - popupHeight - minMargin, center.y - popupHeight / 2));
+        popup.style.left = `${left}px`;
+        popup.style.top = `${top}px`;
+
+        // 表示を確定
+        popup.style.visibility = 'visible';
+    };
+
+    // 「部材追加 (M)」押下で、部材追加設定ポップアップを表示
+    try {
+        if (elements.modeAddMemberBtn) {
+            elements.modeAddMemberBtn.addEventListener('click', () => {
+                try { openAddMemberPopupBasic(); } catch (e) { console.warn('openAddMemberPopupBasic failed', e); }
+            });
+        }
+    } catch (e) {
+        console.warn('add-member basic popup handler init failed', e);
+    }
+
     // --- 追加: 部材追加ポップアップの表示切替制御 ---
     const setupAddMemberPopupToggles = () => {
         const popup = document.getElementById('add-member-popup');
@@ -2662,16 +2749,23 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('showSelectionChoiceMenu が呼び出されました:', { pageX, pageY });
         hideSelectionChoiceMenu();
 
+        const viewport = getVisibleViewportBoundsInThisWindow();
+
         // 表示位置を調整して画面内に収まるようにする（マウス位置の近くに表示）
-        const maxX = window.innerWidth - 280; // メニューの幅を考慮
-        const maxY = window.innerHeight - 150; // メニューの高さを考慮
-        const adjustedX = Math.min(Math.max(50, pageX), maxX);
-        const adjustedY = Math.min(Math.max(50, pageY + 20), maxY); // マウス位置から少し下に表示
+        const menuW = 280;
+        const menuH = 150;
+        const minX = viewport.left + 50;
+        const minY = viewport.top + 50;
+        const maxX = (viewport.right - 50) - menuW;
+        const maxY = (viewport.bottom - 50) - menuH;
+        const adjustedX = Math.min(Math.max(minX, pageX), maxX);
+        const adjustedY = Math.min(Math.max(minY, pageY + 20), maxY); // マウス位置から少し下に表示
         
         console.log('メニュー位置調整:', { 
             original: { pageX, pageY }, 
             adjusted: { adjustedX, adjustedY },
-            windowSize: { width: window.innerWidth, height: window.innerHeight }
+            windowSize: { width: viewport.width, height: viewport.height },
+            viewport
         });
 
         const menu = document.createElement('div');
@@ -3042,22 +3136,21 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // メニューのサイズを取得してから位置を調整
         const menuRect = menu.getBoundingClientRect();
-        const windowWidth = window.innerWidth;
-        const windowHeight = window.innerHeight;
+        const viewport = getVisibleViewportBoundsInThisWindow();
         
-        // マウス位置をクライアント座標に変換
-        let menuLeft = pageX - window.scrollX;
-        let menuTop = pageY - window.scrollY;
+        // 引数は clientX/clientY (position:fixed基準)
+        let menuLeft = pageX;
+        let menuTop = pageY;
         
         // 画面からはみ出さないように調整
-        if (menuLeft + menuRect.width > windowWidth) {
-            menuLeft = windowWidth - menuRect.width - 10;
+        if (menuLeft + menuRect.width > viewport.right) {
+            menuLeft = viewport.right - menuRect.width - 10;
         }
-        if (menuTop + menuRect.height > windowHeight) {
-            menuTop = windowHeight - menuRect.height - 10;
+        if (menuTop + menuRect.height > viewport.bottom) {
+            menuTop = viewport.bottom - menuRect.height - 10;
         }
-        if (menuLeft < 0) menuLeft = 10;
-        if (menuTop < 0) menuTop = 10;
+        if (menuLeft < viewport.left) menuLeft = viewport.left + 10;
+        if (menuTop < viewport.top) menuTop = viewport.top + 10;
         
         menu.style.left = `${menuLeft}px`;
         menu.style.top = `${menuTop}px`;
@@ -3080,7 +3173,7 @@ document.addEventListener('DOMContentLoaded', () => {
             top: menu.style.top,
             originalPageX: pageX,
             originalPageY: pageY,
-            windowSize: { width: windowWidth, height: windowHeight },
+            viewport,
             menuSize: { width: menuRect.width, height: menuRect.height }
         });
         
@@ -3726,29 +3819,28 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // メニューのサイズを取得してから位置を調整（部材一括編集と同じ方式）
         const menuRect = menu.getBoundingClientRect();
-        const windowWidth = window.innerWidth;
-        const windowHeight = window.innerHeight;
+        const viewport = getVisibleViewportBoundsInThisWindow();
         
-        // マウス位置をクライアント座標に変換
-        let menuLeft = pageX - window.scrollX;
-        let menuTop = pageY - window.scrollY;
+        // 引数は clientX/clientY (position:fixed基準)
+        let menuLeft = pageX;
+        let menuTop = pageY;
         
         // 画面からはみ出さないように調整
-        if (menuLeft + menuRect.width > windowWidth) {
-            menuLeft = windowWidth - menuRect.width - 10;
+        if (menuLeft + menuRect.width > viewport.right) {
+            menuLeft = viewport.right - menuRect.width - 10;
         }
-        if (menuTop + menuRect.height > windowHeight) {
-            menuTop = windowHeight - menuRect.height - 10;
+        if (menuTop + menuRect.height > viewport.bottom) {
+            menuTop = viewport.bottom - menuRect.height - 10;
         }
-        if (menuLeft < 0) menuLeft = 10;
-        if (menuTop < 0) menuTop = 10;
+        if (menuLeft < viewport.left) menuLeft = viewport.left + 10;
+        if (menuTop < viewport.top) menuTop = viewport.top + 10;
         
         menu.style.left = `${menuLeft}px`;
         menu.style.top = `${menuTop}px`;
         
         console.log('メニュー位置設定:', {
             mouse: { x: pageX, y: pageY },
-            client: { x: pageX - window.scrollX, y: pageY - window.scrollY },
+            client: { x: pageX, y: pageY },
             menuRect: { width: menuRect.width, height: menuRect.height },
             final: { x: menuLeft, y: menuTop }
         });
@@ -4049,7 +4141,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- State and History Management ---
     const getCurrentState = () => {
-        const state = { nodes: [], members: [], nodeLoads: [], memberLoads: [] };
+        const state = { nodes: [], members: [], nodeLoads: [], memberLoads: [], shearWalls: [] };
         Array.from(elements.nodesTable.rows).forEach(row => {
             state.nodes.push({
                 x: row.cells[1].querySelector('input').value,
@@ -4087,6 +4179,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 i_radius: row.querySelector('.radius-i-input')?.value || '',
                 i_factor: row.querySelector('.section-i-factor')?.value || '1.0',
                 bucklingK: (row.querySelector('.buckling-k-input') ? row.querySelector('.buckling-k-input').value : ''),
+                shearWallId: row.dataset.shearWallId || '',
+                shearWallRole: row.dataset.shearWallRole || ''
             });
             
             // 接合条件の取得 - 動的にselect要素を検索
@@ -4236,6 +4330,57 @@ document.addEventListener('DOMContentLoaded', () => {
         Array.from(elements.memberLoadsTable.rows).forEach(row => {
             state.memberLoads.push({ member: row.cells[0].querySelector('input').value, w: row.cells[1].querySelector('input').value });
         });
+
+        // 耐力壁（壁エレメント置換）の設定を保存
+        try {
+            if (elements.shearWallsTable) {
+                Array.from(elements.shearWallsTable.rows).forEach((row) => {
+                    if (!row) return;
+                    const nodeInputs = Array.from(row.querySelectorAll('input.shearwall-node'));
+                    const kxTInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t'));
+                    const kxCInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c'));
+                    const kxTRigidInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t-rigid'));
+                    const kxCRigidInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c-rigid'));
+                    state.shearWalls.push({
+                        shearWallId: row.dataset.shearWallId || '',
+                        enabled: row.querySelector('.shearwall-enabled')?.checked ? '1' : '0',
+                        lb: nodeInputs[0]?.value || '',
+                        lt: nodeInputs[1]?.value || '',
+                        rb: nodeInputs[2]?.value || '',
+                        rt: nodeInputs[3]?.value || '',
+                        offUpper: row.querySelector('.shearwall-off-upper')?.value || '',
+                        offLower: row.querySelector('.shearwall-off-lower')?.value || '',
+                        kShear: row.querySelector('.shearwall-k-shear')?.value || '',
+                        kShearRigid: row.querySelector('.shearwall-k-shear-rigid')?.checked ? '1' : '0',
+                        ei: row.querySelector('.shearwall-ei')?.value || '',
+                        eiRigid: row.querySelector('.shearwall-ei-rigid')?.checked ? '1' : '0',
+                        kx_lb_t: kxTInputs[0]?.value || '',
+                        kx_lb_c: kxCInputs[0]?.value || '',
+                        kx_lb_t_rigid: kxTRigidInputs[0]?.checked ? '1' : '0',
+                        kx_lb_c_rigid: kxCRigidInputs[0]?.checked ? '1' : '0',
+                        kx_lb_rigid: (kxTRigidInputs[0]?.checked && kxCRigidInputs[0]?.checked) ? '1' : '0',
+                        kx_lt_t: kxTInputs[1]?.value || '',
+                        kx_lt_c: kxCInputs[1]?.value || '',
+                        kx_lt_t_rigid: kxTRigidInputs[1]?.checked ? '1' : '0',
+                        kx_lt_c_rigid: kxCRigidInputs[1]?.checked ? '1' : '0',
+                        kx_lt_rigid: (kxTRigidInputs[1]?.checked && kxCRigidInputs[1]?.checked) ? '1' : '0',
+                        kx_rb_t: kxTInputs[2]?.value || '',
+                        kx_rb_c: kxCInputs[2]?.value || '',
+                        kx_rb_t_rigid: kxTRigidInputs[2]?.checked ? '1' : '0',
+                        kx_rb_c_rigid: kxCRigidInputs[2]?.checked ? '1' : '0',
+                        kx_rb_rigid: (kxTRigidInputs[2]?.checked && kxCRigidInputs[2]?.checked) ? '1' : '0',
+                        kx_rt_t: kxTInputs[3]?.value || '',
+                        kx_rt_c: kxCInputs[3]?.value || '',
+                        kx_rt_t_rigid: kxTRigidInputs[3]?.checked ? '1' : '0',
+                        kx_rt_c_rigid: kxCRigidInputs[3]?.checked ? '1' : '0',
+                        kx_rt_rigid: (kxTRigidInputs[3]?.checked && kxCRigidInputs[3]?.checked) ? '1' : '0',
+                        sideColumnSectionProps: row.dataset.sideColumnSectionProps || ''
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn('getCurrentState: shearWalls read failed', e);
+        }
         return state;
     };
 
@@ -4425,6 +4570,9 @@ document.addEventListener('DOMContentLoaded', () => {
             elements.membersTable.innerHTML = '';
             elements.nodeLoadsTable.innerHTML = '';
             elements.memberLoadsTable.innerHTML = '';
+            if (elements.shearWallsTable) {
+                elements.shearWallsTable.innerHTML = '';
+            }
             
             console.log('🔍 restoreState: テーブルクリア完了');
             
@@ -4754,6 +4902,164 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.log(`🔍 restoreState: 部材荷重 ${index + 1} 復元:`, l);
                 addRow(elements.memberLoadsTable, [`<input type="number" value="${l.member}">`, `<input type="number" value="${l.w}">`], false);
             });
+
+            // 耐力壁（壁エレメント置換）復元
+            try {
+                if (elements.shearWallsTable) {
+                    elements.shearWallsTable.innerHTML = '';
+                }
+
+                if (state.shearWalls && state.shearWalls.length > 0) {
+                    // 念のため初期化（ロード直後のタイミング対策）
+                    try {
+                        const api0 = window.__shearWalls;
+                        if (!api0 || typeof api0.addShearWallRow !== 'function') {
+                            if (typeof initializeShearWallsFeature === 'function') initializeShearWallsFeature();
+                        }
+                    } catch (_) {}
+
+                    const api = window.__shearWalls;
+                    if (elements.shearWallsTable && api && typeof api.addShearWallRow === 'function') {
+                        const updateSectionLabelFromDataset = (row) => {
+                            try {
+                                const labelEl = row.querySelector('.shearwall-section-label');
+                                if (!labelEl) return;
+                                const raw = row.dataset.sideColumnSectionProps;
+                                if (!raw) {
+                                    labelEl.textContent = '-';
+                                    return;
+                                }
+                                const props = JSON.parse(decodeURIComponent(raw));
+                                const sectionName = props.sectionName || props.sectionLabel || '';
+                                const axis = props.selectedAxis || props.sectionAxisLabel || (props.sectionAxis ? props.sectionAxis.label : '') || '';
+                                labelEl.textContent = sectionName ? `${sectionName}${axis ? ' / ' + axis : ''}` : '-';
+                            } catch (_) {
+                                const labelEl = row.querySelector('.shearwall-section-label');
+                                if (labelEl) labelEl.textContent = '-';
+                            }
+                        };
+
+                        const setInputVal = (row, selector, value) => {
+                            const el = row.querySelector(selector);
+                            if (!el) return;
+                            el.value = (value === undefined || value === null) ? '' : String(value);
+                        };
+                        const setChecked = (row, selector, checked) => {
+                            const el = row.querySelector(selector);
+                            if (!el) return;
+                            el.checked = !!checked;
+                        };
+
+                        state.shearWalls.forEach((sw) => {
+                            const row = api.addShearWallRow();
+                            if (!row) return;
+
+                            if (sw.shearWallId !== undefined && sw.shearWallId !== null && String(sw.shearWallId).trim() !== '') {
+                                row.dataset.shearWallId = String(sw.shearWallId);
+                            }
+                            if (sw.sideColumnSectionProps !== undefined) {
+                                row.dataset.sideColumnSectionProps = sw.sideColumnSectionProps || '';
+                            }
+
+                            // enabled
+                            const enabled = (sw.enabled === undefined || sw.enabled === null) ? true : String(sw.enabled) !== '0';
+                            setChecked(row, '.shearwall-enabled', enabled);
+
+                            // nodes
+                            const nodeInputs = Array.from(row.querySelectorAll('input.shearwall-node'));
+                            if (nodeInputs.length >= 4) {
+                                nodeInputs[0].value = (sw.lb === undefined || sw.lb === null) ? '' : String(sw.lb);
+                                nodeInputs[1].value = (sw.lt === undefined || sw.lt === null) ? '' : String(sw.lt);
+                                nodeInputs[2].value = (sw.rb === undefined || sw.rb === null) ? '' : String(sw.rb);
+                                nodeInputs[3].value = (sw.rt === undefined || sw.rt === null) ? '' : String(sw.rt);
+                            }
+
+                            // offsets
+                            setInputVal(row, '.shearwall-off-upper', sw.offUpper);
+                            setInputVal(row, '.shearwall-off-lower', sw.offLower);
+
+                            // kShear / EI
+                            setInputVal(row, '.shearwall-k-shear', sw.kShear);
+                            setChecked(row, '.shearwall-k-shear-rigid', String(sw.kShearRigid || '') === '1');
+                            const kShearInput = row.querySelector('.shearwall-k-shear');
+                            const kShearRigidEl = row.querySelector('.shearwall-k-shear-rigid');
+                            if (kShearInput && kShearRigidEl) kShearInput.disabled = !!kShearRigidEl.checked;
+
+                            setInputVal(row, '.shearwall-ei', sw.ei);
+                            setChecked(row, '.shearwall-ei-rigid', String(sw.eiRigid || '') === '1');
+                            const eiInput = row.querySelector('.shearwall-ei');
+                            const eiRigidEl = row.querySelector('.shearwall-ei-rigid');
+                            if (eiInput && eiRigidEl) eiInput.disabled = !!eiRigidEl.checked;
+
+                            // springs (tension/compression)
+                            const kxT = Array.from(row.querySelectorAll('input.shearwall-kx-t'));
+                            const kxC = Array.from(row.querySelectorAll('input.shearwall-kx-c'));
+                            const kxTRigid = Array.from(row.querySelectorAll('input.shearwall-kx-t-rigid'));
+                            const kxCRigid = Array.from(row.querySelectorAll('input.shearwall-kx-c-rigid'));
+                            if (kxT.length >= 4) {
+                                kxT[0].value = sw.kx_lb_t ?? '';
+                                kxT[1].value = sw.kx_lt_t ?? '';
+                                kxT[2].value = sw.kx_rb_t ?? '';
+                                kxT[3].value = sw.kx_rt_t ?? '';
+                            }
+                            if (kxC.length >= 4) {
+                                kxC[0].value = sw.kx_lb_c ?? '';
+                                kxC[1].value = sw.kx_lt_c ?? '';
+                                kxC[2].value = sw.kx_rb_c ?? '';
+                                kxC[3].value = sw.kx_rt_c ?? '';
+                            }
+
+                            if (kxTRigid.length >= 4 && kxCRigid.length >= 4) {
+                                const legacyLB = String(sw.kx_lb_rigid || '') === '1';
+                                const legacyLT = String(sw.kx_lt_rigid || '') === '1';
+                                const legacyRB = String(sw.kx_rb_rigid || '') === '1';
+                                const legacyRT = String(sw.kx_rt_rigid || '') === '1';
+
+                                const getFlag = (v, fallback) => {
+                                    if (v === undefined || v === null || String(v).trim() === '') return fallback;
+                                    return String(v) === '1';
+                                };
+
+                                const lbT = getFlag(sw.kx_lb_t_rigid, legacyLB);
+                                const lbC = getFlag(sw.kx_lb_c_rigid, legacyLB);
+                                const ltT = getFlag(sw.kx_lt_t_rigid, legacyLT);
+                                const ltC = getFlag(sw.kx_lt_c_rigid, legacyLT);
+                                const rbT = getFlag(sw.kx_rb_t_rigid, legacyRB);
+                                const rbC = getFlag(sw.kx_rb_c_rigid, legacyRB);
+                                const rtT = getFlag(sw.kx_rt_t_rigid, legacyRT);
+                                const rtC = getFlag(sw.kx_rt_c_rigid, legacyRT);
+
+                                kxTRigid[0].checked = lbT;
+                                kxCRigid[0].checked = lbC;
+                                kxTRigid[1].checked = ltT;
+                                kxCRigid[1].checked = ltC;
+                                kxTRigid[2].checked = rbT;
+                                kxCRigid[2].checked = rbC;
+                                kxTRigid[3].checked = rtT;
+                                kxCRigid[3].checked = rtC;
+
+                                if (kxT[0]) kxT[0].disabled = lbT;
+                                if (kxC[0]) kxC[0].disabled = lbC;
+                                if (kxT[1]) kxT[1].disabled = ltT;
+                                if (kxC[1]) kxC[1].disabled = ltC;
+                                if (kxT[2]) kxT[2].disabled = rbT;
+                                if (kxC[2]) kxC[2].disabled = rbC;
+                                if (kxT[3]) kxT[3].disabled = rtT;
+                                if (kxC[3]) kxC[3].disabled = rtC;
+                            }
+
+                            updateSectionLabelFromDataset(row);
+                        });
+
+                        // restoreStateで shearWallId を上書きするので、次番号追随のために再番号付けを呼ぶ
+                        try {
+                            if (typeof api.renumberShearWallTable === 'function') api.renumberShearWallTable();
+                        } catch (_) {}
+                    }
+                }
+            } catch (e) {
+                console.warn('restoreState: 耐力壁復元に失敗', e);
+            }
             
             renumberTables();
             
@@ -5467,6 +5773,69 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             elements.errorMessage.style.display = 'none';
             clearResults(); 
+
+            // ==========================================================
+            // 軸バネ(引張/圧縮)の非線形切替を「符号が安定するまで」最大5回反復
+            // - parseInputs が前回符号でKxを切替
+            // - memberForces の軸力符号から次回用マップを更新
+            // - マップが変化したら再計算
+            // ==========================================================
+            const MAX_AXIAL_SPRING_ITERS = 5;
+            try {
+                window.__axialSpringIterState = window.__axialSpringIterState || { active: false, count: 0, token: '' };
+                if (!window.__axialSpringIterState.active) {
+                    window.__axialSpringIterState = {
+                        active: true,
+                        count: 0,
+                        token: `${Date.now()}_${Math.random()}`
+                    };
+                }
+            } catch (_) {}
+
+            const iterState = (window.__axialSpringIterState && typeof window.__axialSpringIterState === 'object')
+                ? window.__axialSpringIterState
+                : { active: false, count: 0, token: '' };
+            const iterToken = iterState.token;
+            const prevAxialMap = (() => {
+                try {
+                    const m = window.__springAxialSignByMemberRowIndex;
+                    return (m && typeof m === 'object') ? { ...m } : {};
+                } catch (_) {
+                    return {};
+                }
+            })();
+
+            const sameAxialMap = (a, b) => {
+                const aa = a || {};
+                const bb = b || {};
+                const keys = new Set([...Object.keys(aa), ...Object.keys(bb)]);
+                for (const k of keys) {
+                    if ((aa[k] ?? null) !== (bb[k] ?? null)) return false;
+                }
+                return true;
+            };
+
+            const maybeIterateAxialSprings = (nextMap) => {
+                try {
+                    const st = window.__axialSpringIterState;
+                    if (!st || !st.active || st.token !== iterToken) return false;
+                    const changed = !sameAxialMap(prevAxialMap, nextMap);
+                    if (changed && (st.count + 1) < MAX_AXIAL_SPRING_ITERS) {
+                        st.count += 1;
+                        setTimeout(() => {
+                            const st2 = window.__axialSpringIterState;
+                            if (st2 && st2.active && st2.token === iterToken) calculate();
+                        }, 0);
+                        return true;
+                    }
+                    st.active = false;
+                    return false;
+                } catch (_) {
+                    try { if (window.__axialSpringIterState) window.__axialSpringIterState.active = false; } catch (_) {}
+                    return false;
+                }
+            };
+
             const { nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights } = parseInputs();
             
             // 解析用に自重の等分布荷重を部材荷重に合成
@@ -5741,6 +6110,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         nextMap[rowIdx] = (Number(N) < 0) ? -1 : 1; // 負=圧縮, 正=引張
                     });
                     window.__springAxialSignByMemberRowIndex = nextMap;
+
+                    // 符号が変わる限り最大5回まで再解析
+                    if (maybeIterateAxialSprings(nextMap)) return;
                 } catch (e) {
                     console.warn('spring axial sign map update failed', e);
                 }
@@ -5806,6 +6178,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     nextMap[rowIdx] = (Number(N) < 0) ? -1 : 1; // 負=圧縮, 正=引張
                 });
                 window.__springAxialSignByMemberRowIndex = nextMap;
+
+                // 符号が変わる限り最大5回まで再解析
+                if (maybeIterateAxialSprings(nextMap)) return;
             } catch (e) {
                 console.warn('spring axial sign map update failed', e);
             }
@@ -5827,6 +6202,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             displayResults(D_global, R, memberForces, nodes, members, combinedNodeLoads, finalMemberLoads);
         } catch (error) {
+            try { if (window.__axialSpringIterState) window.__axialSpringIterState.active = false; } catch (_) {}
             elements.errorMessage.textContent = `エラー: ${error.message}`;
             elements.errorMessage.style.display = 'block';
             console.error(error);
@@ -6236,7 +6612,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 const KxC = KxC_ui * 1000; // kN/mm -> kN/m
                 const Ky = Ky_ui * 1000; // kN/mm -> kN/m
                 const Kr = Kr_ui * 1e-3;  // kN·mm -> kN·m
-                const isRigidKx = rigidKxEl ? rigidKxEl.checked : false;
+                // rigidKx: 引張/圧縮を分けて扱えるように、dataset を優先（耐力壁自動生成のspringがここに入る）
+                const parseBool = (v) => {
+                    const s = (v === undefined || v === null) ? '' : String(v).trim().toLowerCase();
+                    return (s === '1' || s === 'true' || s === 'yes');
+                };
+                let isRigidKxT = rigidKxEl ? rigidKxEl.checked : false;
+                let isRigidKxC = isRigidKxT;
+                try {
+                    if (container.dataset && ('rigidKxT' in container.dataset || 'rigidKxC' in container.dataset)) {
+                        isRigidKxT = parseBool(container.dataset.rigidKxT);
+                        isRigidKxC = ('rigidKxC' in container.dataset) ? parseBool(container.dataset.rigidKxC) : isRigidKxT;
+                    }
+                } catch (_) {}
                 const isRigidKy = rigidKyEl ? rigidKyEl.checked : false;
                 const isRigidKr = rigidKrEl ? rigidKrEl.checked : false;
 
@@ -6249,12 +6637,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 } catch (_) {}
                 const KxEff = (axialSign < 0) ? (KxC || KxT || 0) : (KxT || 0);
+                const isRigidKxEff = (axialSign < 0) ? !!isRigidKxC : !!isRigidKxT;
 
                 // 水平・垂直ともに0の場合は最小EPSを入れて解析を安定化させる（ただし剛指定は優先）
-                if (!isRigidKx && !isRigidKy && (KxEff === 0 || KxEff === null) && (Ky === 0 || Ky === null)) {
-                    return { Kx: EPS_SPRING, Kx_tension: EPS_SPRING, Kx_compression: EPS_SPRING, Ky: EPS_SPRING, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
+                if (!isRigidKxEff && !isRigidKy && (KxEff === 0 || KxEff === null) && (Ky === 0 || Ky === null)) {
+                    return { Kx: EPS_SPRING, Kx_tension: EPS_SPRING, Kx_compression: EPS_SPRING, Ky: EPS_SPRING, Kr: Kr || 0, rigidKx: isRigidKxEff, rigidKy: isRigidKy, rigidKr: isRigidKr, rigidKx_tension: !!isRigidKxT, rigidKx_compression: !!isRigidKxC };
                 }
-                return { Kx: KxEff || 0, Kx_tension: KxT || 0, Kx_compression: (KxC || KxT || 0), Ky: Ky || 0, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
+                return { Kx: KxEff || 0, Kx_tension: KxT || 0, Kx_compression: (KxC || KxT || 0), Ky: Ky || 0, Kr: Kr || 0, rigidKx: isRigidKxEff, rigidKy: isRigidKy, rigidKr: isRigidKr, rigidKx_tension: !!isRigidKxT, rigidKx_compression: !!isRigidKxC };
             };
 
             let spring_i = null;
@@ -6449,7 +6838,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.log(`🔍 部材${index + 1}の軸情報を取得:`, sectionAxis);
             }
 
-            return { i,j,E,strengthProps,I,A,Z,Zx,Zy,ix,iy,length:L,c,s,T,i_conn,j_conn,k_local,material,sectionInfo,sectionAxis, spring_i, spring_j, bucklingK, Ix: Ix_m4, Iy: Iy_m4, J: J_m4, Iw: Iw_m6 };
+            return { tableRowIndex: index, i,j,E,strengthProps,I,A,Z,Zx,Zy,ix,iy,length:L,c,s,T,i_conn,j_conn,k_local,material,sectionInfo,sectionAxis, spring_i, spring_j, bucklingK, Ix: Ix_m4, Iy: Iy_m4, J: J_m4, Iw: Iw_m6 };
         }).filter(member => member !== null); // 長さ0の部材(null)を除外
 
         // フォールバック: sectionInfo が欠落している行に対して最小限の sectionInfo を自動生成して設定する
@@ -10920,13 +11309,16 @@ document.addEventListener('DOMContentLoaded', () => {
         
         console.log('🔍 ポップアップサイズ:', { width: popupWidth, height: popupHeight });
         
-        const windowWidth = window.innerWidth;
-        const windowHeight = window.innerHeight;
+        // 統合版(iframe埋め込み)では window.innerHeight が巨大になり、画面外に配置されることがある。
+        // そのため「実際に見えている領域中心」を基準に配置する。
+        const center = getVisibleCenterInThisWindow();
+        const windowWidth = center.viewportW;
+        const windowHeight = center.viewportH;
         const minMargin = 20;
-        
+
         // 画面中央に配置
-        const left = Math.max(minMargin, (windowWidth - popupWidth) / 2);
-        const top = Math.max(minMargin, (windowHeight - popupHeight) / 2);
+        const left = Math.max(minMargin, Math.min(windowWidth - popupWidth - minMargin, center.x - popupWidth / 2));
+        const top = Math.max(minMargin, Math.min(windowHeight - popupHeight - minMargin, center.y - popupHeight / 2));
         
         console.log('🔍 ポップアップ位置:', { left, top, windowWidth, windowHeight });
         
@@ -11763,11 +12155,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // 複数選択状態をチェック
         if (selectedMembers.size > 1) {
             console.log('✅ 複数部材選択時の右クリック - 一括編集メニュー表示:', Array.from(selectedMembers));
-            showBulkEditMenu(e.pageX, e.pageY);
+            showBulkEditMenu(e.clientX, e.clientY);
             return;
         } else if (selectedNodes.size > 1) {
             console.log('✅ 複数節点選択時の右クリック - 一括編集メニュー表示:', Array.from(selectedNodes));
-            showBulkNodeEditMenu(e.pageX, e.pageY);
+            showBulkNodeEditMenu(e.clientX, e.clientY);
             return;
         }
         
@@ -11815,19 +12207,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 const popupRect = popup.getBoundingClientRect();
                 const popupWidth = popupRect.width || 300;  // デフォルト幅
                 const popupHeight = popupRect.height || 250; // デフォルト高さ
-                const windowWidth = window.innerWidth;
-                const windowHeight = window.innerHeight;
-                const availableHeight = Math.min(windowHeight, document.documentElement.clientHeight);
+                const viewport = getVisibleViewportBoundsInThisWindow();
                 const minMargin = 10;
                 const bottomMargin = 20; // タスクバー対策
-                
-                // 画面内に収まるように配置
-                const left = Math.max(minMargin, Math.min((windowWidth - popupWidth) / 2, windowWidth - popupWidth - minMargin));
-                const top = Math.max(minMargin, Math.min((availableHeight - popupHeight) / 2, availableHeight - popupHeight - bottomMargin));
+
+                const centerX = viewport.left + viewport.width / 2;
+                const centerY = viewport.top + viewport.height / 2;
+                const left = Math.max(viewport.left + minMargin, Math.min(centerX - popupWidth / 2, viewport.right - popupWidth - minMargin));
+                const top = Math.max(viewport.top + minMargin, Math.min(centerY - popupHeight / 2, viewport.bottom - popupHeight - bottomMargin));
                 
                 popup.style.left = `${left}px`;
                 popup.style.top = `${top}px`;
                 popup.style.position = 'fixed';
+                try { adjustPopupPosition(popup); } catch (_) {}
             } else {
                 console.error('❌ nodeLoadPopup 要素が見つかりません');
             }
@@ -11849,14 +12241,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const margin = 8;
                 const menuRect = menu.getBoundingClientRect();
-                if (left + menuRect.width > window.innerWidth - margin) {
-                    left = Math.max(margin, window.innerWidth - menuRect.width - margin);
+                const viewport = getVisibleViewportBoundsInThisWindow();
+                if (left + menuRect.width > viewport.right - margin) {
+                    left = Math.max(viewport.left + margin, viewport.right - menuRect.width - margin);
                 }
-                if (top + menuRect.height > window.innerHeight - margin) {
-                    top = Math.max(margin, window.innerHeight - menuRect.height - margin);
+                if (top + menuRect.height > viewport.bottom - margin) {
+                    top = Math.max(viewport.top + margin, viewport.bottom - menuRect.height - margin);
                 }
-                if (left < margin) left = margin;
-                if (top < margin) top = margin;
+                if (left < viewport.left + margin) left = viewport.left + margin;
+                if (top < viewport.top + margin) top = viewport.top + margin;
                 menu.style.left = `${left}px`;
                 menu.style.top = `${top}px`;
             } else {
@@ -12241,9 +12634,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const popupRect = popup.getBoundingClientRect();
             const popupWidth = popupRect.width || 400;  // デフォルト幅
             const popupHeight = popupRect.height || 350; // デフォルト高さ
-            const windowWidth = window.innerWidth;
-            const windowHeight = window.innerHeight;
-            const availableHeight = Math.min(windowHeight, document.documentElement.clientHeight);
+            const viewport = getVisibleViewportBoundsInThisWindow();
             const canvasRect = elements.modelCanvas.getBoundingClientRect();
             
             // スクロール位置を考慮
@@ -12293,41 +12684,46 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // 右側に配置を試行
                 left = memberBounds.right + margin;
-                if (left + popupWidth > windowWidth - minMargin) {
+                if (left + popupWidth > viewport.right - minMargin) {
                     // 右側に収まらない場合は左側に配置
                     left = memberBounds.left - popupWidth - margin;
-                    if (left < minMargin) {
+                    if (left < viewport.left + minMargin) {
                         // 左側にも収まらない場合は上下に配置
-                        left = Math.max(minMargin, Math.min((windowWidth - popupWidth) / 2, windowWidth - popupWidth - minMargin));
+                        const centerX = viewport.left + viewport.width / 2;
+                        left = Math.max(viewport.left + minMargin, Math.min(centerX - popupWidth / 2, viewport.right - popupWidth - minMargin));
                         top = memberBounds.bottom + margin;
-                        if (top + popupHeight > availableHeight - bottomMargin) {
+                        if (top + popupHeight > viewport.bottom - bottomMargin) {
                             // 下側に収まらない場合は上側に配置
                             top = memberBounds.top - popupHeight - margin;
-                            if (top < minMargin) {
+                            if (top < viewport.top + minMargin) {
                                 // どこにも収まらない場合は画面中央（強制的に収める）
-                                left = Math.max(minMargin, (windowWidth - popupWidth) / 2);
-                                top = Math.max(minMargin, (availableHeight - popupHeight) / 2);
+                                const cx = viewport.left + viewport.width / 2;
+                                const cy = viewport.top + viewport.height / 2;
+                                left = Math.max(viewport.left + minMargin, cx - popupWidth / 2);
+                                top = Math.max(viewport.top + minMargin, cy - popupHeight / 2);
                                 // ウィンドウより大きい場合は調整
-                                if (left + popupWidth > windowWidth - minMargin) {
-                                    left = minMargin;
+                                if (left + popupWidth > viewport.right - minMargin) {
+                                    left = viewport.left + minMargin;
                                 }
-                                if (top + popupHeight > availableHeight - bottomMargin) {
-                                    top = minMargin;
+                                if (top + popupHeight > viewport.bottom - bottomMargin) {
+                                    top = viewport.top + minMargin;
                                 }
                             }
                         }
                     } else {
                         // 左側に配置できる場合の縦位置
-                        top = Math.max(minMargin, Math.min(memberBounds.top, availableHeight - popupHeight - bottomMargin));
+                        top = Math.max(viewport.top + minMargin, Math.min(memberBounds.top, viewport.bottom - popupHeight - bottomMargin));
                     }
                 } else {
                     // 右側に配置できる場合の縦位置
-                    top = Math.max(minMargin, Math.min(memberBounds.top, availableHeight - popupHeight - bottomMargin));
+                    top = Math.max(viewport.top + minMargin, Math.min(memberBounds.top, viewport.bottom - popupHeight - bottomMargin));
                 }
             } else {
                 // 部材の位置が取得できない場合は画面中央に配置
-                left = Math.max(10, Math.min((windowWidth - popupWidth) / 2, windowWidth - popupWidth - 10));
-                top = Math.max(10, Math.min((availableHeight - popupHeight) / 2, availableHeight - popupHeight - 20));
+                const cx = viewport.left + viewport.width / 2;
+                const cy = viewport.top + viewport.height / 2;
+                left = Math.max(viewport.left + 10, Math.min(cx - popupWidth / 2, viewport.right - popupWidth - 10));
+                top = Math.max(viewport.top + 10, Math.min(cy - popupHeight / 2, viewport.bottom - popupHeight - 20));
             }
             
             popup.style.left = `${left}px`;
@@ -12385,12 +12781,9 @@ document.addEventListener('DOMContentLoaded', () => {
             height: popupHeight,
             currentRect: popupRect
         });
-        const windowWidth = window.innerWidth;
-        
-        // 実際に利用可能な画面高さを取得（タスクバーなどを除く）
-        const windowHeight = window.innerHeight;
-        const documentHeight = document.documentElement.clientHeight;
-        const availableHeight = Math.min(windowHeight, documentHeight);
+        const viewport = getVisibleViewportBoundsInThisWindow();
+        const windowWidth = viewport.width;
+        const availableHeight = viewport.height;
         
         const minMargin = 10;
         const bottomMargin = 20; // タスクバー対策でより大きなマージン
@@ -12404,53 +12797,56 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // 右側に配置を試行
             left = targetBounds.right + margin;
-            if (left + popupWidth > windowWidth - minMargin) {
+            if (left + popupWidth > viewport.right - minMargin) {
                 // 右側に収まらない場合は左側に配置
                 left = targetBounds.left - popupWidth - margin;
-                if (left < minMargin) {
+                if (left < viewport.left + minMargin) {
                     // 左側にも収まらない場合は上下に配置
-                    left = Math.max(minMargin, Math.min((windowWidth - popupWidth) / 2, windowWidth - popupWidth - minMargin));
+                    const centerX = viewport.left + viewport.width / 2;
+                    left = Math.max(viewport.left + minMargin, Math.min(centerX - popupWidth / 2, viewport.right - popupWidth - minMargin));
                     top = targetBounds.bottom + margin;
-                    if (top + popupHeight > availableHeight - bottomMargin) {
+                    if (top + popupHeight > viewport.bottom - bottomMargin) {
                         // 下側に収まらない場合は上側に配置
                         top = targetBounds.top - popupHeight - margin;
-                        if (top < minMargin) {
+                        if (top < viewport.top + minMargin) {
                             // どこにも収まらない場合は画面中央（強制的に収める）
-                            left = Math.max(minMargin, (windowWidth - popupWidth) / 2);
-                            top = Math.max(minMargin, (availableHeight - popupHeight) / 2);
+                            const cx = viewport.left + viewport.width / 2;
+                            const cy = viewport.top + viewport.height / 2;
+                            left = Math.max(viewport.left + minMargin, cx - popupWidth / 2);
+                            top = Math.max(viewport.top + minMargin, cy - popupHeight / 2);
                         }
                     }
                 } else {
                     // 左側に配置できる場合の縦位置
-                    top = Math.max(minMargin, Math.min(targetBounds.top, availableHeight - popupHeight - bottomMargin));
+                    top = Math.max(viewport.top + minMargin, Math.min(targetBounds.top, viewport.bottom - popupHeight - bottomMargin));
                 }
             } else {
                 // 右側に配置できる場合の縦位置
-                top = Math.max(minMargin, Math.min(targetBounds.top, availableHeight - popupHeight - bottomMargin));
+                top = Math.max(viewport.top + minMargin, Math.min(targetBounds.top, viewport.bottom - popupHeight - bottomMargin));
             }
         } else {
             // 画面境界チェックのみ
             // 右端チェック
-            if (left + popupWidth > windowWidth - minMargin) {
-                left = windowWidth - popupWidth - minMargin;
+            if (left + popupWidth > viewport.right - minMargin) {
+                left = viewport.right - popupWidth - minMargin;
             }
             // 左端チェック
-            if (left < minMargin) {
-                left = minMargin;
+            if (left < viewport.left + minMargin) {
+                left = viewport.left + minMargin;
             }
             // 下端チェック（タスクバー対応）
-            if (top + popupHeight > availableHeight - bottomMargin) {
-                top = availableHeight - popupHeight - bottomMargin;
+            if (top + popupHeight > viewport.bottom - bottomMargin) {
+                top = viewport.bottom - popupHeight - bottomMargin;
             }
             // 上端チェック
             if (top < minMargin) {
-                top = minMargin;
+                top = viewport.top + minMargin;
             }
         }
         
         // 最終的に画面内に強制的に収める
-        left = Math.max(minMargin, Math.min(left, windowWidth - popupWidth - minMargin));
-        top = Math.max(minMargin, Math.min(top, availableHeight - popupHeight - bottomMargin));
+        left = Math.max(viewport.left + minMargin, Math.min(left, viewport.right - popupWidth - minMargin));
+        top = Math.max(viewport.top + minMargin, Math.min(top, viewport.bottom - popupHeight - bottomMargin));
         
         console.log('✅ ポップアップ最終位置:', {
             left: left,
@@ -12483,22 +12879,42 @@ document.addEventListener('DOMContentLoaded', () => {
         let isDragging = false;
         let dragOffset = { x: 0, y: 0 };
         
-        // ヘッダー部分を取得（h4タグまたはポップアップ全体）
-        const header = popup.querySelector('h4') || popup;
+        // ヘッダー部分を取得（h4タグ優先。無い場合は先頭要素）
+        const header = popup.querySelector('h4') || popup.firstElementChild || popup;
         if (!header) return;
         
         // ヘッダーにドラッグ可能であることを示すスタイルを適用
         header.style.cursor = 'move';
         header.style.userSelect = 'none';
         
+        function shouldIgnoreDragStart(e) {
+            try {
+                const t = e && e.target ? e.target : null;
+                if (!t || !t.closest) return false;
+                // 入力操作・ボタン操作はドラッグ開始しない
+                if (t.closest('input, textarea, select, button, label, a')) return true;
+            } catch (_) {}
+            return false;
+        }
+
         function startDrag(e) {
+            if (e && e.button !== undefined && e.button !== 0) return; // 左クリックのみ
+            if (shouldIgnoreDragStart(e)) return;
+
             isDragging = true;
             const popupRect = popup.getBoundingClientRect();
             dragOffset.x = e.clientX - popupRect.left;
             dragOffset.y = e.clientY - popupRect.top;
+
+            // left/top が未設定のときもドラッグできるように現在位置を固定値化
+            if (!popup.style.left) popup.style.left = `${popupRect.left}px`;
+            if (!popup.style.top) popup.style.top = `${popupRect.top}px`;
+            popup.style.position = 'fixed';
             
-            // ポップアップを最前面に移動とドラッグスタイル適用
-            popup.style.zIndex = '1002';
+            // ポップアップを最前面に移動とドラッグスタイル適用（元のz-indexを保持）
+            const prevZ = popup.style.zIndex || window.getComputedStyle(popup).zIndex || '';
+            popup.dataset.prevZIndex = prevZ;
+            popup.style.zIndex = '300000';
             popup.classList.add('popup-dragging');
             
             document.addEventListener('mousemove', doDrag);
@@ -12508,10 +12924,8 @@ document.addEventListener('DOMContentLoaded', () => {
         
         function doDrag(e) {
             if (!isDragging) return;
-            
-            const windowWidth = window.innerWidth;
-            const windowHeight = window.innerHeight;
-            const availableHeight = Math.min(windowHeight, document.documentElement.clientHeight);
+
+            const viewport = getVisibleViewportBoundsInThisWindow();
             const popupRect = popup.getBoundingClientRect();
             const minMargin = 5;
             const bottomMargin = 20;
@@ -12521,8 +12935,8 @@ document.addEventListener('DOMContentLoaded', () => {
             let newTop = e.clientY - dragOffset.y;
             
             // 画面境界内に制限
-            newLeft = Math.max(minMargin, Math.min(newLeft, windowWidth - popupRect.width - minMargin));
-            newTop = Math.max(minMargin, Math.min(newTop, availableHeight - popupRect.height - bottomMargin));
+            newLeft = Math.max(viewport.left + minMargin, Math.min(newLeft, viewport.right - popupRect.width - minMargin));
+            newTop = Math.max(viewport.top + minMargin, Math.min(newTop, viewport.bottom - popupRect.height - bottomMargin));
             
             popup.style.left = `${newLeft}px`;
             popup.style.top = `${newTop}px`;
@@ -12532,7 +12946,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (isDragging) {
                 isDragging = false;
                 // z-indexを元に戻してドラッグスタイルを削除
-                popup.style.zIndex = '1001';
+                try {
+                    if (popup.dataset && popup.dataset.prevZIndex !== undefined) {
+                        popup.style.zIndex = popup.dataset.prevZIndex;
+                        delete popup.dataset.prevZIndex;
+                    }
+                } catch (_) {}
                 popup.classList.remove('popup-dragging');
                 document.removeEventListener('mousemove', doDrag);
                 document.removeEventListener('mouseup', stopDrag);
@@ -12578,9 +12997,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // 全てのポップアップにドラッグ機能を適用
-    if(elements.memberPropsPopup) makePopupDraggable(elements.memberPropsPopup);
-    if(elements.addMemberPopup) makePopupDraggable(elements.addMemberPopup);
-    if(elements.nodeLoadPopup) makePopupDraggable(elements.nodeLoadPopup);
+    try {
+        const popups = [
+            elements.memberPropsPopup,
+            elements.addMemberPopup,
+            elements.nodeLoadPopup,
+            elements.nodePropsPopup,
+            elements.nodeCoordsPopup,
+            elements.shearWallPropsPopup
+        ].filter(Boolean);
+        popups.forEach(makePopupDraggable);
+    } catch (e) {
+        console.warn('ポップアップのドラッグ機能適用に失敗', e);
+    }
 
     // 結果図のキャンバスにマウス操作機能を追加
     addResultCanvasMouseControls('displacement-canvas');
@@ -12954,10 +13383,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // ポップアップを画面中央に配置
         const popupRect = popup.getBoundingClientRect();
-        popup.style.left = `${(window.innerWidth - popupRect.width) / 2}px`;
-        popup.style.top = `${(window.innerHeight - popupRect.height) / 2}px`;
+        const center = getVisibleCenterInThisWindow();
+        const v = center.viewport || { left: 0, top: 0, right: center.viewportW, bottom: center.viewportH };
+        const margin = 10;
+        const left = Math.max(v.left + margin, Math.min(v.right - popupRect.width - margin, center.x - popupRect.width / 2));
+        const top = Math.max(v.top + margin, Math.min(v.bottom - popupRect.height - margin, center.y - popupRect.height / 2));
+        popup.style.left = `${left}px`;
+        popup.style.top = `${top}px`;
         popup.style.position = 'fixed';
         popup.style.zIndex = '10000';
+
+        try { adjustPopupPosition(popup); } catch (_) {}
         
         console.log('✅ 節点プロパティポップアップ表示完了:', {
             nodeIndex: selectedNodeIndex + 1,
@@ -15625,9 +16061,12 @@ const loadPreset = (index) => {
                     row.remove();
                 }
             });
+
+            // 耐力壁の再生成で部材行が増減し、行番号キーの符号マップが破綻しやすいためリセット
+            try { window.__springAxialSignByMemberRowIndex = {}; } catch (_) {}
         };
 
-        const setSpringOnConnCell = (connCell, Kx, { rigidKy = true, rigidKr = true } = {}) => {
+        const setSpringOnConnCell = (connCell, Kx, { rigidKx = false, rigidKxT = null, rigidKxC = null, rigidKy = true, rigidKr = true } = {}) => {
             if (!connCell) return;
             const select = connCell.querySelector('.conn-select');
             if (select) select.value = 'spring';
@@ -15640,7 +16079,7 @@ const loadPreset = (index) => {
             const kxCInput = springBox.querySelector('.spring-kx-c');
             const kyInput = springBox.querySelector('.spring-ky');
             const krInput = springBox.querySelector('.spring-kr');
-            const rigidKx = springBox.querySelector('.spring-rigid-kx');
+            const rigidKxEl = springBox.querySelector('.spring-rigid-kx');
             const rigidKyEl = springBox.querySelector('.spring-rigid-ky');
             const rigidKrEl = springBox.querySelector('.spring-rigid-kr');
 
@@ -15658,7 +16097,30 @@ const loadPreset = (index) => {
                 kxCInput.disabled = false;
                 kxCInput.value = String(KxC_kN_per_mm);
             }
-            if (rigidKx) rigidKx.checked = false;
+            const rT = (rigidKxT === null || rigidKxT === undefined) ? !!rigidKx : !!rigidKxT;
+            const rC = (rigidKxC === null || rigidKxC === undefined) ? !!rigidKx : !!rigidKxC;
+            try {
+                springBox.dataset.rigidKxT = rT ? '1' : '0';
+                springBox.dataset.rigidKxC = rC ? '1' : '0';
+            } catch (_) {}
+
+            if (kxInput) kxInput.disabled = !!rT;
+            if (kxCInput) kxCInput.disabled = !!rC;
+
+            if (rigidKxEl) {
+                rigidKxEl.indeterminate = (rT !== rC);
+                rigidKxEl.checked = (rT && rC);
+                rigidKxEl.onchange = () => {
+                    const v = !!rigidKxEl.checked;
+                    rigidKxEl.indeterminate = false;
+                    try {
+                        springBox.dataset.rigidKxT = v ? '1' : '0';
+                        springBox.dataset.rigidKxC = v ? '1' : '0';
+                    } catch (_) {}
+                    if (kxInput) kxInput.disabled = v;
+                    if (kxCInput) kxCInput.disabled = v;
+                };
+            }
 
             if (kyInput) kyInput.value = '0';
             if (krInput) krInput.value = '0';
@@ -15849,12 +16311,45 @@ const loadPreset = (index) => {
                             <span style="font-size:12px; color:#666; line-height:1;">引張</span>
                             <input type="number" class="shearwall-kx-t" min="0" step="1" value="0" style="width:100%; max-width:100%; min-width:0; box-sizing:border-box;">
                         </label>
+                        <label style="display:flex; align-items:flex-start; gap:4px; white-space:normal; line-height:1.2; margin:0;">
+                            <input type="checkbox" class="shearwall-kx-t-rigid" style="margin-top:2px;">
+                            <span>引張 剛</span>
+                        </label>
                         <label style="display:flex; flex-direction:column; gap:2px; margin:0; white-space:normal;">
                             <span style="font-size:12px; color:#666; line-height:1;">圧縮</span>
                             <input type="number" class="shearwall-kx-c" min="0" step="1" value="0" style="width:100%; max-width:100%; min-width:0; box-sizing:border-box;">
                         </label>
+                        <label style="display:flex; align-items:flex-start; gap:4px; white-space:normal; line-height:1.2; margin:0;">
+                            <input type="checkbox" class="shearwall-kx-c-rigid" style="margin-top:2px;">
+                            <span>圧縮 剛</span>
+                        </label>
                     </div>
                 `;
+
+                // 剛チェックでKx入力を個別に無効化
+                try {
+                    const t = cell.querySelector('.shearwall-kx-t');
+                    const c = cell.querySelector('.shearwall-kx-c');
+                    const rt = cell.querySelector('.shearwall-kx-t-rigid');
+                    const rc = cell.querySelector('.shearwall-kx-c-rigid');
+
+                    if (rt) {
+                        const updateT = () => {
+                            const v = !!rt.checked;
+                            if (t) t.disabled = v;
+                        };
+                        rt.addEventListener('change', updateT);
+                        updateT();
+                    }
+                    if (rc) {
+                        const updateC = () => {
+                            const v = !!rc.checked;
+                            if (c) c.disabled = v;
+                        };
+                        rc.addEventListener('change', updateC);
+                        updateC();
+                    }
+                } catch (_) {}
             };
             makeSpringCell(); // 左下
             makeSpringCell(); // 左上
@@ -15929,6 +16424,7 @@ const loadPreset = (index) => {
                 scheduleAutoApply();
                 return row;
             };
+            window.__shearWalls.renumberShearWallTable = renumberShearWallTable;
         } catch (e) {
             console.warn('耐力壁API公開に失敗', e);
         }
@@ -15967,28 +16463,14 @@ const loadPreset = (index) => {
                 const h = rect.height || 420;
                 const margin = 10;
 
-                // 通常: iframe(非埋め込み)でも単体ページでも viewport 中央
-                let left = (window.innerWidth - w) / 2;
-                let top = (window.innerHeight - h) / 2;
+                const viewport = getVisibleViewportBoundsInThisWindow();
 
-                // 埋め込み(iframe)時: iframe高さがコンテンツ全高に伸びるため innerHeight が巨大になり
-                // fixed の中央が画面外へ飛ぶ。親ウィンドウの viewport 中央に合わせて補正する。
-                try {
-                    const isEmbedded = document.body && document.body.classList.contains('embedded');
-                    if (isEmbedded && window.parent && window.parent !== window && window.frameElement) {
-                        const parentWin = window.parent;
-                        const frameRect = window.frameElement.getBoundingClientRect(); // parent viewport 座標
-                        const parentLeft = (parentWin.innerWidth - w) / 2;
-                        const parentTop = (parentWin.innerHeight - h) / 2;
-                        left = parentLeft - frameRect.left;
-                        top = parentTop - frameRect.top;
-                    }
-                } catch (_) {
-                    // cross-origin等は無視して通常計算
-                }
+                // 可視viewport中央（埋め込み時も含め共通）
+                let left = viewport.left + (viewport.width - w) / 2;
+                let top = viewport.top + (viewport.height - h) / 2;
 
-                left = Math.max(margin, Math.min(left, window.innerWidth - w - margin));
-                top = Math.max(margin, Math.min(top, window.innerHeight - h - margin));
+                left = Math.max(viewport.left + margin, Math.min(left, viewport.right - w - margin));
+                top = Math.max(viewport.top + margin, Math.min(top, viewport.bottom - h - margin));
                 popup.style.left = `${left}px`;
                 popup.style.top = `${top}px`;
             }
@@ -16043,6 +16525,8 @@ const loadPreset = (index) => {
 
             const kxTInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t'));
             const kxCInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c'));
+            const kxTRigidInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t-rigid'));
+            const kxCRigidInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c-rigid'));
             setNum('sw-props-kx-lb-t', kxTInputs[0]?.value);
             setNum('sw-props-kx-lb-c', kxCInputs[0]?.value);
             setNum('sw-props-kx-lt-t', kxTInputs[1]?.value);
@@ -16051,6 +16535,47 @@ const loadPreset = (index) => {
             setNum('sw-props-kx-rb-c', kxCInputs[2]?.value);
             setNum('sw-props-kx-rt-t', kxTInputs[3]?.value);
             setNum('sw-props-kx-rt-c', kxCInputs[3]?.value);
+
+            const setChk = (id, v) => {
+                const el = document.getElementById(id);
+                if (el) el.checked = !!v;
+            };
+
+            // 後方互換: 旧形式(kx_*_rigid)のみの場合は両方剛として扱う
+            const legacyKxRigid = Array.from(row.querySelectorAll('input.shearwall-kx-rigid'));
+            const legacyLB = !!legacyKxRigid[0]?.checked;
+            const legacyLT = !!legacyKxRigid[1]?.checked;
+            const legacyRB = !!legacyKxRigid[2]?.checked;
+            const legacyRT = !!legacyKxRigid[3]?.checked;
+
+            setChk('sw-props-kx-lb-t-rigid', (kxTRigidInputs[0] ? !!kxTRigidInputs[0].checked : legacyLB));
+            setChk('sw-props-kx-lb-c-rigid', (kxCRigidInputs[0] ? !!kxCRigidInputs[0].checked : legacyLB));
+            setChk('sw-props-kx-lt-t-rigid', (kxTRigidInputs[1] ? !!kxTRigidInputs[1].checked : legacyLT));
+            setChk('sw-props-kx-lt-c-rigid', (kxCRigidInputs[1] ? !!kxCRigidInputs[1].checked : legacyLT));
+            setChk('sw-props-kx-rb-t-rigid', (kxTRigidInputs[2] ? !!kxTRigidInputs[2].checked : legacyRB));
+            setChk('sw-props-kx-rb-c-rigid', (kxCRigidInputs[2] ? !!kxCRigidInputs[2].checked : legacyRB));
+            setChk('sw-props-kx-rt-t-rigid', (kxTRigidInputs[3] ? !!kxTRigidInputs[3].checked : legacyRT));
+            setChk('sw-props-kx-rt-c-rigid', (kxCRigidInputs[3] ? !!kxCRigidInputs[3].checked : legacyRT));
+
+            const bindKxRigidOne = (rigidId, inputId) => {
+                const r = document.getElementById(rigidId);
+                const t = document.getElementById(inputId);
+                if (!r) return;
+                const update = () => {
+                    const v = !!r.checked;
+                    if (t) t.disabled = v;
+                };
+                r.onchange = update;
+                update();
+            };
+            bindKxRigidOne('sw-props-kx-lb-t-rigid', 'sw-props-kx-lb-t');
+            bindKxRigidOne('sw-props-kx-lb-c-rigid', 'sw-props-kx-lb-c');
+            bindKxRigidOne('sw-props-kx-lt-t-rigid', 'sw-props-kx-lt-t');
+            bindKxRigidOne('sw-props-kx-lt-c-rigid', 'sw-props-kx-lt-c');
+            bindKxRigidOne('sw-props-kx-rb-t-rigid', 'sw-props-kx-rb-t');
+            bindKxRigidOne('sw-props-kx-rb-c-rigid', 'sw-props-kx-rb-c');
+            bindKxRigidOne('sw-props-kx-rt-t-rigid', 'sw-props-kx-rt-t');
+            bindKxRigidOne('sw-props-kx-rt-c-rigid', 'sw-props-kx-rt-c');
 
             // 剛チェックの連動
             if (kRigidEl) {
@@ -16222,6 +16747,8 @@ const loadPreset = (index) => {
 
             const kxTInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t'));
             const kxCInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c'));
+            const kxTRigidInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t-rigid'));
+            const kxCRigidInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c-rigid'));
             if (kxTInputs.length >= 4 && kxCInputs.length >= 4) {
                 kxTInputs[0].value = getVal('sw-props-kx-lb-t');
                 kxCInputs[0].value = getVal('sw-props-kx-lb-c');
@@ -16231,6 +16758,26 @@ const loadPreset = (index) => {
                 kxCInputs[2].value = getVal('sw-props-kx-rb-c');
                 kxTInputs[3].value = getVal('sw-props-kx-rt-t');
                 kxCInputs[3].value = getVal('sw-props-kx-rt-c');
+            }
+
+            if (kxTRigidInputs.length >= 4 && kxCRigidInputs.length >= 4) {
+                kxTRigidInputs[0].checked = getChecked('sw-props-kx-lb-t-rigid');
+                kxCRigidInputs[0].checked = getChecked('sw-props-kx-lb-c-rigid');
+                kxTRigidInputs[1].checked = getChecked('sw-props-kx-lt-t-rigid');
+                kxCRigidInputs[1].checked = getChecked('sw-props-kx-lt-c-rigid');
+                kxTRigidInputs[2].checked = getChecked('sw-props-kx-rb-t-rigid');
+                kxCRigidInputs[2].checked = getChecked('sw-props-kx-rb-c-rigid');
+                kxTRigidInputs[3].checked = getChecked('sw-props-kx-rt-t-rigid');
+                kxCRigidInputs[3].checked = getChecked('sw-props-kx-rt-c-rigid');
+
+                if (kxTInputs[0]) kxTInputs[0].disabled = !!kxTRigidInputs[0].checked;
+                if (kxCInputs[0]) kxCInputs[0].disabled = !!kxCRigidInputs[0].checked;
+                if (kxTInputs[1]) kxTInputs[1].disabled = !!kxTRigidInputs[1].checked;
+                if (kxCInputs[1]) kxCInputs[1].disabled = !!kxCRigidInputs[1].checked;
+                if (kxTInputs[2]) kxTInputs[2].disabled = !!kxTRigidInputs[2].checked;
+                if (kxCInputs[2]) kxCInputs[2].disabled = !!kxCRigidInputs[2].checked;
+                if (kxTInputs[3]) kxTInputs[3].disabled = !!kxTRigidInputs[3].checked;
+                if (kxCInputs[3]) kxCInputs[3].disabled = !!kxCRigidInputs[3].checked;
             }
 
             // 必要に応じて再描画
@@ -16246,7 +16793,10 @@ const loadPreset = (index) => {
             const closeBtn = document.getElementById('sw-props-close');
             const applyBtn = document.getElementById('sw-props-apply');
             if (closeBtn && popup) closeBtn.addEventListener('click', () => setPopupVisible(popup, false));
-            if (applyBtn) applyBtn.addEventListener('click', () => applyShearWallPropsFromPopup());
+            if (applyBtn && popup) applyBtn.addEventListener('click', () => {
+                applyShearWallPropsFromPopup();
+                setPopupVisible(popup, false);
+            });
         } catch (e) {
             console.warn('耐力壁プロパティポップアップのイベント登録に失敗', e);
         }
@@ -16309,6 +16859,9 @@ const loadPreset = (index) => {
                 if (silent) console.warn(msg);
                 else alert(msg);
             };
+
+            // 耐力壁の置換部材を作り直す前提なので、前回解析の行番号キー符号は無効化しておく
+            try { window.__springAxialSignByMemberRowIndex = {}; } catch (_) {}
 
             const rows = Array.from(elements.shearWallsTable.rows);
             for (const row of rows) {
@@ -16413,10 +16966,27 @@ const loadPreset = (index) => {
                 // ばね軸剛性（kN/m） 引張/圧縮別
                 const kxTInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t'));
                 const kxCInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c'));
+                const kxTRigidInputs = Array.from(row.querySelectorAll('input.shearwall-kx-t-rigid'));
+                const kxCRigidInputs = Array.from(row.querySelectorAll('input.shearwall-kx-c-rigid'));
                 const springLB = { tension: parseNumber(kxTInputs[0]?.value, 0), compression: parseNumber(kxCInputs[0]?.value, parseNumber(kxTInputs[0]?.value, 0)) };
                 const springLT = { tension: parseNumber(kxTInputs[1]?.value, 0), compression: parseNumber(kxCInputs[1]?.value, parseNumber(kxTInputs[1]?.value, 0)) };
                 const springRB = { tension: parseNumber(kxTInputs[2]?.value, 0), compression: parseNumber(kxCInputs[2]?.value, parseNumber(kxTInputs[2]?.value, 0)) };
                 const springRT = { tension: parseNumber(kxTInputs[3]?.value, 0), compression: parseNumber(kxCInputs[3]?.value, parseNumber(kxTInputs[3]?.value, 0)) };
+                // 後方互換: 旧形式(kx_*_rigid)のみの場合は両方剛として扱う
+                const legacyRigid = Array.from(row.querySelectorAll('input.shearwall-kx-rigid'));
+                const legacyLB = !!legacyRigid[0]?.checked;
+                const legacyLT = !!legacyRigid[1]?.checked;
+                const legacyRB = !!legacyRigid[2]?.checked;
+                const legacyRT = !!legacyRigid[3]?.checked;
+
+                const rigidLBT = (kxTRigidInputs[0] ? !!kxTRigidInputs[0].checked : legacyLB);
+                const rigidLBC = (kxCRigidInputs[0] ? !!kxCRigidInputs[0].checked : legacyLB);
+                const rigidLTT = (kxTRigidInputs[1] ? !!kxTRigidInputs[1].checked : legacyLT);
+                const rigidLTC = (kxCRigidInputs[1] ? !!kxCRigidInputs[1].checked : legacyLT);
+                const rigidRBT = (kxTRigidInputs[2] ? !!kxTRigidInputs[2].checked : legacyRB);
+                const rigidRBC = (kxCRigidInputs[2] ? !!kxCRigidInputs[2].checked : legacyRB);
+                const rigidRTT = (kxTRigidInputs[3] ? !!kxTRigidInputs[3].checked : legacyRT);
+                const rigidRTC = (kxCRigidInputs[3] ? !!kxCRigidInputs[3].checked : legacyRT);
 
                 // 置換柱
                 const kShearRigid = !!row.querySelector('.shearwall-k-shear-rigid')?.checked;
@@ -16448,7 +17018,7 @@ const loadPreset = (index) => {
                     sectionAxis: sideAxisLabel,
                     shearWallId: wallId,
                     shearWallRole: 'side-left-bottom',
-                    springI: { Kx: springLB, options: { rigidKy: true, rigidKr: true } },
+                    springI: { Kx: springLB, options: { rigidKxT: rigidLBT, rigidKxC: rigidLBC, rigidKy: true, rigidKr: false } },
                     sectionInfo: sideSection.sectionInfo || null,
                     sectionAxisObj: sideSection.sectionAxis || null
                 });
@@ -16483,7 +17053,7 @@ const loadPreset = (index) => {
                     sectionAxis: sideAxisLabel,
                     shearWallId: wallId,
                     shearWallRole: 'side-left-top',
-                    springJ: { Kx: springLT, options: { rigidKy: true, rigidKr: true } },
+                    springJ: { Kx: springLT, options: { rigidKxT: rigidLTT, rigidKxC: rigidLTC, rigidKy: true, rigidKr: false } },
                     sectionInfo: sideSection.sectionInfo || null,
                     sectionAxisObj: sideSection.sectionAxis || null
                 });
@@ -16503,7 +17073,7 @@ const loadPreset = (index) => {
                     sectionAxis: sideAxisLabel,
                     shearWallId: wallId,
                     shearWallRole: 'side-right-bottom',
-                    springI: { Kx: springRB, options: { rigidKy: true, rigidKr: true } },
+                    springI: { Kx: springRB, options: { rigidKxT: rigidRBT, rigidKxC: rigidRBC, rigidKy: true, rigidKr: false } },
                     sectionInfo: sideSection.sectionInfo || null,
                     sectionAxisObj: sideSection.sectionAxis || null
                 });
@@ -16538,7 +17108,7 @@ const loadPreset = (index) => {
                     sectionAxis: sideAxisLabel,
                     shearWallId: wallId,
                     shearWallRole: 'side-right-top',
-                    springJ: { Kx: springRT, options: { rigidKy: true, rigidKr: true } },
+                    springJ: { Kx: springRT, options: { rigidKxT: rigidRTT, rigidKxC: rigidRTC, rigidKy: true, rigidKr: false } },
                     sectionInfo: sideSection.sectionInfo || null,
                     sectionAxisObj: sideSection.sectionAxis || null
                 });
@@ -16720,7 +17290,7 @@ const loadPreset = (index) => {
                 csvSections.push('#NODES\n' + header + '\n' + rows.join('\n'));
             }
             if (state.members.length > 0) {
-                    const header = 'i,j,E,strengthType,strengthValue,I,I_factor,A,A_factor,Z,Z_factor,i_radius,i_factor,bucklingK,i_conn,j_conn,Kx_i,Ky_i,Kr_i,Kx_j,Ky_j,Kr_j,Zx,Zy,ix,iy,sectionLabel,sectionSummary,sectionSource,sectionInfo,sectionAxisKey,sectionAxisMode,sectionAxisLabel';
+                    const header = 'i,j,E,strengthType,strengthValue,I,I_factor,A,A_factor,Z,Z_factor,i_radius,i_factor,bucklingK,i_conn,j_conn,Kx_i,Ky_i,Kr_i,Kx_j,Ky_j,Kr_j,Zx,Zy,ix,iy,sectionLabel,sectionSummary,sectionSource,sectionInfo,sectionAxisKey,sectionAxisMode,sectionAxisLabel,shearWallId,shearWallRole';
                         const rows = state.members.map(m => {
                     const sectionLabel = m.sectionLabel ? encodeURIComponent(m.sectionLabel) : '';
                     const sectionSummary = m.sectionSummary ? encodeURIComponent(m.sectionSummary) : '';
@@ -16742,7 +17312,7 @@ const loadPreset = (index) => {
                             const Z_factor = (m.Z_factor !== undefined && m.Z_factor !== null && m.Z_factor !== '') ? m.Z_factor : '1.0';
                             const i_factor = (m.i_factor !== undefined && m.i_factor !== null && m.i_factor !== '') ? m.i_factor : '1.0';
                             const i_radius = (m.i_radius !== undefined && m.i_radius !== null) ? m.i_radius : '';
-                            return `${m.i},${m.j},${m.E},${m.strengthType},${m.strengthValue},${m.I},${I_factor},${m.A},${A_factor},${m.Z},${Z_factor},${i_radius},${i_factor},${bk},${m.i_conn},${m.j_conn},${kxi},${kyi},${kri},${kxj},${kyj},${krj},${m.Zx || ''},${m.Zy || ''},${m.ix || ''},${m.iy || ''},${sectionLabel},${sectionSummary},${sectionSource},${sectionInfoEncoded},${sectionAxisKey},${sectionAxisMode},${sectionAxisLabel}`;
+                            return `${m.i},${m.j},${m.E},${m.strengthType},${m.strengthValue},${m.I},${I_factor},${m.A},${A_factor},${m.Z},${Z_factor},${i_radius},${i_factor},${bk},${m.i_conn},${m.j_conn},${kxi},${kyi},${kri},${kxj},${kyj},${krj},${m.Zx || ''},${m.Zy || ''},${m.ix || ''},${m.iy || ''},${sectionLabel},${sectionSummary},${sectionSource},${sectionInfoEncoded},${sectionAxisKey},${sectionAxisMode},${sectionAxisLabel},${m.shearWallId || ''},${m.shearWallRole || ''}`;
                 });
                 csvSections.push('#MEMBERS\n' + header + '\n' + rows.join('\n'));
             }
@@ -16755,6 +17325,17 @@ const loadPreset = (index) => {
                 const header = 'member,w';
                 const rows = state.memberLoads.map(l => `${l.member},${l.w}`);
                 csvSections.push('#MEMBERLOADS\n' + header + '\n' + rows.join('\n'));
+            }
+
+            if (state.shearWalls && state.shearWalls.length > 0) {
+                const header = 'shearWallId,enabled,lb,lt,rb,rt,offUpper,offLower,kShear,kShearRigid,ei,eiRigid,'
+                    + 'kx_lb_t,kx_lb_c,kx_lb_t_rigid,kx_lb_c_rigid,kx_lb_rigid,'
+                    + 'kx_lt_t,kx_lt_c,kx_lt_t_rigid,kx_lt_c_rigid,kx_lt_rigid,'
+                    + 'kx_rb_t,kx_rb_c,kx_rb_t_rigid,kx_rb_c_rigid,kx_rb_rigid,'
+                    + 'kx_rt_t,kx_rt_c,kx_rt_t_rigid,kx_rt_c_rigid,kx_rt_rigid,'
+                    + 'sideColumnSectionProps';
+                const rows = state.shearWalls.map(w => `${w.shearWallId || ''},${w.enabled || ''},${w.lb || ''},${w.lt || ''},${w.rb || ''},${w.rt || ''},${w.offUpper || ''},${w.offLower || ''},${w.kShear || ''},${w.kShearRigid || ''},${w.ei || ''},${w.eiRigid || ''},${w.kx_lb_t || ''},${w.kx_lb_c || ''},${w.kx_lb_t_rigid || ''},${w.kx_lb_c_rigid || ''},${w.kx_lb_rigid || ''},${w.kx_lt_t || ''},${w.kx_lt_c || ''},${w.kx_lt_t_rigid || ''},${w.kx_lt_c_rigid || ''},${w.kx_lt_rigid || ''},${w.kx_rb_t || ''},${w.kx_rb_c || ''},${w.kx_rb_t_rigid || ''},${w.kx_rb_c_rigid || ''},${w.kx_rb_rigid || ''},${w.kx_rt_t || ''},${w.kx_rt_c || ''},${w.kx_rt_t_rigid || ''},${w.kx_rt_c_rigid || ''},${w.kx_rt_rigid || ''},${w.sideColumnSectionProps || ''}`);
+                csvSections.push('#SHEARWALLS\n' + header + '\n' + rows.join('\n'));
             }
             const csvString = csvSections.join('\n\n');
             const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
@@ -16813,7 +17394,7 @@ const loadPreset = (index) => {
     };
 
     const parseCsvTextToState = (text) => {
-        const state = { meta: {}, nodes: [], members: [], nodeLoads: [], memberLoads: [] };
+        const state = { meta: {}, nodes: [], members: [], nodeLoads: [], memberLoads: [], shearWalls: [] };
         const sections = text.split(/#\w+\s*/).filter(s => s.trim() !== '');
         const headers = text.match(/#\w+/g) || [];
         if (headers.length === 0 || sections.length === 0) throw new Error('有効なセクション（#NODESなど）が見つかりませんでした。');
@@ -16842,6 +17423,8 @@ const loadPreset = (index) => {
                     state.nodeLoads.push(obj);
                 } else if (header === '#MEMBERLOADS') {
                     state.memberLoads.push(obj);
+                } else if (header === '#SHEARWALLS') {
+                    state.shearWalls.push(obj);
                 }
             });
         });
