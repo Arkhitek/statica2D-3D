@@ -14,131 +14,169 @@ const MATERIAL_DENSITY_DATA = {
     "205000": 7850,    // スチール
     "193000": 7900,    // ステンレス
     "70000": 2700,     // アルミニウム
-    
+
     // 木材
     "7000": 400,       // 軟材（杉、もみ等）
     "8000": 500,       // 中硬材（松類、つが等）
     "9000": 550,       // やや硬材（カラマツ、檜等）
     "10000": 800,      // 硬材（樫）
-    
+
     // デフォルト値
     "custom": 7850     // 任意入力時のデフォルト（スチール相当）
 };
 
-// 設定オブジェクト
-const CONFIG = {
-    validation: {
-        minPositiveValue: 0.001,
-        maxDimension: 10000,
-        maxMemberCount: 1000,
-        maxNodeCount: 1000
-    },
-    ui: {
-        animationDuration: 200,
-        errorDisplayTime: 300
-    }
-};
-
-// 2Dフォルダ配下からでも、ルート側の共通HTMLを参照できるようにする
-const resolveSharedHtmlPath = (fileName) => {
-    try {
-        const pathname = window.location && typeof window.location.pathname === 'string'
-            ? window.location.pathname
-            : '';
-        const decodedPathname = (() => {
-            try { return decodeURIComponent(pathname); } catch { return pathname; }
-        })();
-        const folderName = '2D構造解析';
-        const encodedFolderName = encodeURIComponent(folderName);
-        if (decodedPathname.includes(`/${folderName}/`) || pathname.includes(`/${encodedFolderName}/`)) {
-            return `../${fileName}`;
-        }
-    } catch (e) {
-        // ignore
-    }
-    return fileName;
-};
-
-// 単位・定数変換テーブル
+// 単位変換・材料定数
+// 2D側は内部計算で E,G を kN/m² 系に寄せているため、(N/mm²=MPa) → (kN/m²) は×1000。
 const UNIT_CONVERSION = {
-    // センチメートル → ミリメートル / メートル の簡易変換
-    CM_TO_M: 0.01,
-    CM2_TO_M2: 1e-4,
-    CM3_TO_M3: 1e-6,
-    CM4_TO_M4: 1e-8,
-
-    // cm → mm 系
-    CM2_TO_MM2: 1e2,
-    CM3_TO_MM3: 1e3,
-    CM4_TO_MM4: 1e4,
-
-    // 材料定数（代表値）
-    // ユーザデータに依存する場合は上書きされるが、デフォルト値として用いる
-    E_STEEL: 205000, // N/mm² (205 GPa)
-    // ポアソン比 ν = 0.3 を仮定してせん断弾性係数 G を設定
-    G_STEEL: 205000 / (2 * (1 + 0.3)) // ≒ 79,230 N/mm²
+    CM4_TO_MM4: 1e4,    // cm⁴ → mm⁴ (10,000倍)
+    CM3_TO_MM3: 1e6,    // cm³ → mm³ (1,000,000倍)
+    CM2_TO_MM2: 1e2,    // cm² → mm² (100倍)
+    E_STEEL: 2.05e5 * 1000,
+    G_STEEL: 7.7e4 * 1000,
 };
 
-// ▼▼▼▼▼ 追加: 自重計算ロジック (calculateSelfWeight)
-const calculateSelfWeight = {
-    calculateAllSelfWeights: (nodes, members, checkbox, tbody) => {
+// 自重計算ユーティリティ（2D版）
+// - 断面積: cm²入力 → m²へ変換（×1e-4）
+// - 出力: 等分布荷重 w は kN/m（下向きを + とする）
+// - 節点荷重 py は kN（上向きを + とするため、自重は負）
+const calculateSelfWeight = globalThis.calculateSelfWeight || {
+    getMemberSelfWeight: (densityKgPerM3, areaCm2, lengthM) => {
+        if (!(densityKgPerM3 > 0) || !(areaCm2 > 0) || !(lengthM > 0)) return 0;
+        const areaM2 = areaCm2 * 1e-4;
+        return (densityKgPerM3 * areaM2 * 9.807) / 1000; // kN/m
+    },
+
+    calculateAllSelfWeights: (nodes, members, considerSelfWeightCheckbox, membersTableBody) => {
         const memberSelfWeights = [];
         const nodeSelfWeights = [];
 
-        if (!checkbox || !checkbox.checked) {
+        if (!considerSelfWeightCheckbox || !considerSelfWeightCheckbox.checked) {
             return { memberSelfWeights, nodeSelfWeights };
         }
 
-        members.forEach((member, index) => {
-            const A = member.A;
-            if (!A || A <= 0) return;
+        if (!membersTableBody) {
+            console.warn('membersTableBody が見つからないため自重計算をスキップします');
+            return { memberSelfWeights, nodeSelfWeights };
+        }
 
-            let density = 7850;
-            if (tbody && tbody.rows[index]) {
-                const row = tbody.rows[index];
-                const densityInput = row.querySelector('.density-cell input');
-                if (densityInput) {
-                    const v = parseFloat(densityInput.value);
-                    if (!isNaN(v)) density = v;
-                } else {
-                    const eValue = member.E ? (member.E / 1000).toString() : null;
-                    if (eValue && MATERIAL_DENSITY_DATA[eValue]) {
-                        density = MATERIAL_DENSITY_DATA[eValue];
-                    }
-                }
+        const nodeWeightMap = new Map();
+        const HORIZONTAL_TOLERANCE_DEG = 5;
+        const VERTICAL_TOLERANCE_DEG = 5;
+
+        const ensureNodeLoad = (nodeIndex) => {
+            if (!nodeWeightMap.has(nodeIndex)) {
+                nodeWeightMap.set(nodeIndex, { nodeIndex, px: 0, py: 0, mz: 0 });
             }
-            if (isNaN(density)) density = 7850;
+            return nodeWeightMap.get(nodeIndex);
+        };
 
-            const g = 9.80665;
-            const weightPerMeter = -(A * density * g) / 1000;
+        members.forEach((member, index) => {
+            const node1 = nodes?.[member.i];
+            const node2 = nodes?.[member.j];
+            if (!node1 || !node2) return;
 
-            const n1 = nodes[member.i];
-            const n2 = nodes[member.j];
-            if (!n1 || !n2) return;
-            const dx = n2.x - n1.x;
-            const dy = n2.y - n1.y;
+            const dx = (node2.x ?? 0) - (node1.x ?? 0);
+            const dy = (node2.y ?? 0) - (node1.y ?? 0);
             const length = Math.sqrt(dx * dx + dy * dy);
-            if (length === 0) return;
+            if (!(length > 0)) return;
 
-            if (Math.abs(dy) < 1e-6) {
-                // 水平部材：ソルバーの減算ロジックに合わせ、下向きを正しい方向に作用させるため符号を反転して渡す
-                memberSelfWeights.push({ memberIndex: index, w: -weightPerMeter, loadType: 'distributed' });
-            } else if (Math.abs(dx) < 1e-6) {
-                // 垂直部材：節点荷重として加算する処理側が負の値を期待しているため、既存のまま
-                const totalWeight = weightPerMeter * length;
-                nodeSelfWeights.push({ nodeIndex: member.i, px: 0, py: totalWeight / 2, mz: 0 });
-                nodeSelfWeights.push({ nodeIndex: member.j, px: 0, py: totalWeight / 2, mz: 0 });
-                memberSelfWeights.push({ memberIndex: index, w: 0, totalWeight: Math.abs(totalWeight), loadType: 'concentrated' });
+            const memberRow = membersTableBody.rows[index];
+            if (!memberRow) return;
+
+            const densityInput = memberRow.querySelector('.density-cell input, input.member-density-input, input.member-density, input[name="density"], input[id^="member-density-"]');
+            const density = densityInput ? parseFloat(densityInput.value) : 0;
+
+            const areaInput = memberRow.querySelector('.section-A-input') || memberRow.querySelector('.section-A-input input') || memberRow.cells?.[6]?.querySelector('input');
+            const areaCm2 = areaInput ? parseFloat(areaInput.value) : 0;
+
+            if (!(density > 0) || !(areaCm2 > 0)) return;
+
+            const weightPerMeter = calculateSelfWeight.getMemberSelfWeight(density, areaCm2, length); // kN/m (下向き+)
+            if (!(weightPerMeter > 0)) return;
+
+            const totalWeight = weightPerMeter * length; // kN
+
+            const angleFromHorizontal = Math.atan2(Math.abs(dy), Math.abs(dx));
+            const angleDeg = (angleFromHorizontal * 180) / Math.PI;
+
+            let memberType;
+            if (angleDeg <= HORIZONTAL_TOLERANCE_DEG) {
+                memberType = 'horizontal';
+            } else if (angleDeg >= (90 - VERTICAL_TOLERANCE_DEG)) {
+                memberType = 'vertical';
             } else {
-                // 斜め部材：垂直成分のみを等分布荷重として扱うため符号を反転して渡す
-                const wy = -weightPerMeter * (Math.abs(dx) / length);
-                memberSelfWeights.push({ memberIndex: index, w: wy, loadType: 'mixed', horizontalComponent: 0 });
+                memberType = 'inclined';
+            }
+
+            if (memberType === 'horizontal') {
+                memberSelfWeights.push({
+                    memberIndex: index,
+                    member: index + 1,
+                    w: weightPerMeter,
+                    totalWeight,
+                    isFromSelfWeight: true,
+                    loadType: 'distributed'
+                });
+            } else if (memberType === 'vertical') {
+                const lowerNodeIndex = (node1.y ?? 0) < (node2.y ?? 0) ? member.i : member.j;
+
+                memberSelfWeights.push({
+                    memberIndex: index,
+                    member: index + 1,
+                    w: 0,
+                    totalWeight,
+                    isFromSelfWeight: true,
+                    loadType: 'concentrated',
+                    appliedNodeIndex: lowerNodeIndex
+                });
+
+                // 節点荷重（上向き+ なので自重は負）
+                ensureNodeLoad(lowerNodeIndex).py -= totalWeight;
+            } else {
+                // 斜め部材: 重力(0, -weightPerMeter) を、部材軸方向 + 直角方向に分解
+                const theta = Math.atan2(dy, dx); // +x からの角度
+                const axisX = dx / length;
+                const axisY = dy / length;
+
+                // perp = (sinθ, -cosθ) を採用（既存の描画ロジックと整合）
+                const wPerp = weightPerMeter * Math.cos(theta); // kN/m（下向き成分を perp 方向に写像）
+                const wAxial = -weightPerMeter * Math.sin(theta); // kN/m（部材軸方向）
+
+                memberSelfWeights.push({
+                    memberIndex: index,
+                    member: index + 1,
+                    w: wPerp,
+                    totalWeight,
+                    isFromSelfWeight: true,
+                    loadType: 'mixed',
+                    horizontalComponent: Math.abs(wAxial)
+                });
+
+                // 軸方向成分は節点荷重として両端に分配
+                const axialForceEach = (wAxial * length) / 2; // kN
+                const n1 = ensureNodeLoad(member.i);
+                const n2 = ensureNodeLoad(member.j);
+
+                n1.px += axisX * axialForceEach;
+                n1.py += axisY * axialForceEach;
+                n2.px += axisX * axialForceEach;
+                n2.py += axisY * axialForceEach;
+            }
+
+            // テーブルの自重表示（存在する場合のみ）
+            const densityCell = memberRow.querySelector('.density-cell');
+            const selfWeightDisplay = densityCell?.querySelector('.self-weight-display');
+            if (selfWeightDisplay) {
+                selfWeightDisplay.textContent = `自重: ${totalWeight.toFixed(3)} kN`;
             }
         });
 
+        nodeWeightMap.forEach((nodeLoad) => nodeSelfWeights.push(nodeLoad));
         return { memberSelfWeights, nodeSelfWeights };
     }
 };
+
+globalThis.calculateSelfWeight = calculateSelfWeight;
 
 // parseInputs をトップレベルの関数として定義（CONFIG 内に埋め込まれていたものを切り出し）
 const parseInputs = () => {
@@ -1966,25 +2004,38 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!popup) return;
 
         // まず表示（サイズ計測のため）
-        popup.style.display = 'block';
-        popup.style.position = 'fixed';
-        popup.style.visibility = 'hidden';
-        popup.style.zIndex = '99999';
+        // 注意: display:block + visibility:hidden の要素が上に残るとクリックを吸う可能性があるため、計測中は pointer-events:none にする
+        try {
+            popup.style.display = 'block';
+            popup.style.position = 'fixed';
+            popup.style.visibility = 'hidden';
+            popup.style.pointerEvents = 'none';
+            popup.style.zIndex = '99999';
 
-        // 中央寄せ（埋め込み時は親の表示領域中心に合わせる）
-        const rect = popup.getBoundingClientRect();
-        const popupWidth = rect.width || 380;
-        const popupHeight = rect.height || 400;
-        const minMargin = 20;
-        const center = getVisibleCenterInThisWindow();
-        const v = center.viewport || { left: 0, top: 0, right: center.viewportW, bottom: center.viewportH };
-        const left = Math.max(v.left + minMargin, Math.min(v.right - popupWidth - minMargin, center.x - popupWidth / 2));
-        const top = Math.max(v.top + minMargin, Math.min(v.bottom - popupHeight - minMargin, center.y - popupHeight / 2));
-        popup.style.left = `${left}px`;
-        popup.style.top = `${top}px`;
+            // 中央寄せ（埋め込み時は親の表示領域中心に合わせる）
+            const rect = popup.getBoundingClientRect();
+            const popupWidth = rect.width || 380;
+            const popupHeight = rect.height || 400;
+            const minMargin = 20;
+            const center = getVisibleCenterInThisWindow();
+            const v = center.viewport || { left: 0, top: 0, right: center.viewportW, bottom: center.viewportH };
+            const left = Math.max(v.left + minMargin, Math.min(v.right - popupWidth - minMargin, center.x - popupWidth / 2));
+            const top = Math.max(v.top + minMargin, Math.min(v.bottom - popupHeight - minMargin, center.y - popupHeight / 2));
+            popup.style.left = `${left}px`;
+            popup.style.top = `${top}px`;
 
-        // 表示を確定
-        popup.style.visibility = 'visible';
+            // 表示を確定
+            popup.style.visibility = 'visible';
+            popup.style.pointerEvents = 'auto';
+        } catch (e) {
+            console.warn('openAddMemberPopupBasic failed', e);
+            // 失敗時にクリック阻害が残らないよう確実に非表示化
+            try {
+                popup.style.pointerEvents = 'none';
+                popup.style.visibility = 'hidden';
+                popup.style.display = 'none';
+            } catch (_) {}
+        }
     };
 
     // 「部材追加 (M)」押下で、部材追加設定ポップアップを表示
@@ -2313,24 +2364,29 @@ document.addEventListener('DOMContentLoaded', () => {
     if (elements.memberPropsPopup) {
         elements.memberPropsPopup.style.display = 'none';
         elements.memberPropsPopup.style.visibility = 'hidden';
+        elements.memberPropsPopup.style.pointerEvents = 'none';
         console.log('✅ memberPropsPopup初期化完了 (非表示設定)');
     }
     if (elements.nodePropsPopup) {
         elements.nodePropsPopup.style.display = 'none';
         elements.nodePropsPopup.style.visibility = 'hidden';
+        elements.nodePropsPopup.style.pointerEvents = 'none';
         console.log('✅ nodePropsPopup初期化完了 (非表示設定)');
     }
     if (elements.nodeLoadPopup) {
         elements.nodeLoadPopup.style.display = 'none';
         elements.nodeLoadPopup.style.visibility = 'hidden';
+        elements.nodeLoadPopup.style.pointerEvents = 'none';
     }
     if (elements.nodeCoordsPopup) {
         elements.nodeCoordsPopup.style.display = 'none';
         elements.nodeCoordsPopup.style.visibility = 'hidden';
+        elements.nodeCoordsPopup.style.pointerEvents = 'none';
     }
     if (elements.addMemberPopup) {
         elements.addMemberPopup.style.display = 'none';
         elements.addMemberPopup.style.visibility = 'hidden';
+        elements.addMemberPopup.style.pointerEvents = 'none';
     }
     
     // ツールチップ表示の状態管理
@@ -3230,11 +3286,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const dialog = document.createElement('div');
         dialog.id = 'bulk-edit-dialog';
         dialog.style.cssText = `
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            position: fixed;
             background-color: white; border: 2px solid #007bff; border-radius: 8px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.3); padding: 20px;
-            min-width: 500px; max-width: 90vw; max-height: 90vh; overflow-y: auto; z-index: 3000;
+            min-width: 500px; max-width: 90vw; max-height: 90vh; overflow-y: auto; z-index: 999999;
             font-family: Arial, sans-serif;
+            display: block;
+            visibility: hidden;
+            pointer-events: none;
         `;
         
         dialog.innerHTML = `
@@ -3328,6 +3387,42 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         
         document.body.appendChild(dialog);
+
+        // iframe 埋め込み時に window.innerWidth/Height 由来の中心がズレることがあるため
+        // 「実際に見えている iframe 可視領域」を基準にダイアログを配置する。
+        try {
+            const dialogRect = dialog.getBoundingClientRect();
+            const dialogWidth = dialogRect.width || 520;
+            const dialogHeight = dialogRect.height || 420;
+
+            const center = getVisibleCenterInThisWindow();
+            const viewport = center.viewport || getVisibleViewportBoundsInThisWindow();
+            const minMargin = 20;
+
+            const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+            const desiredLeft = center.x - dialogWidth / 2;
+            const desiredTop = center.y - dialogHeight / 2;
+            const left = clamp(desiredLeft, viewport.left + minMargin, viewport.right - dialogWidth - minMargin);
+            const top = clamp(desiredTop, viewport.top + minMargin, viewport.bottom - dialogHeight - minMargin);
+
+            dialog.style.left = `${left}px`;
+            dialog.style.top = `${top}px`;
+            dialog.style.transform = 'none';
+        } catch (e) {
+            console.warn('bulk-edit-dialog positioning failed', e);
+            // フォールバック（従来の中央）
+            dialog.style.left = '50%';
+            dialog.style.top = '50%';
+            dialog.style.transform = 'translate(-50%, -50%)';
+        }
+
+        dialog.style.visibility = 'visible';
+        dialog.style.pointerEvents = 'auto';
+
+        // 表示直後の再計測/再配置（DevTools開閉や埋め込み環境の初期ズレ対策）
+        requestAnimationFrame(() => {
+            try { if (typeof adjustPopupPosition === 'function') adjustPopupPosition(dialog); } catch (_) {}
+        });
         
         // 各種入力UIの生成ヘルパー
         const setupInputContainer = (checkboxId, containerId, generator) => {
@@ -3869,19 +3964,21 @@ document.addEventListener('DOMContentLoaded', () => {
         dialog.id = 'bulk-node-edit-dialog';
         dialog.style.cssText = `
             position: fixed;
-            left: 50%;
-            top: 50%;
-            transform: translate(-50%, -50%);
+            left: 0px;
+            top: 0px;
             background: white;
             border: 2px solid #333;
             border-radius: 8px;
             padding: 20px;
-            z-index: 10001;
+            z-index: 999999;
             box-shadow: 0 4px 20px rgba(0,0,0,0.3);
             min-width: 400px;
             max-height: 80vh;
             overflow-y: auto;
             font-family: Arial, sans-serif;
+            display: block;
+            visibility: hidden;
+            pointer-events: none;
         `;
         
         dialog.innerHTML = `
@@ -3932,6 +4029,39 @@ document.addEventListener('DOMContentLoaded', () => {
         
         document.body.appendChild(dialog);
         console.log('節点一括編集ダイアログが作成されました');
+
+        // iframe 埋め込み時でも確実に可視領域へ出す
+        try {
+            const dialogRect = dialog.getBoundingClientRect();
+            const dialogWidth = dialogRect.width || 420;
+            const dialogHeight = dialogRect.height || 320;
+
+            const center = getVisibleCenterInThisWindow();
+            const viewport = center.viewport || getVisibleViewportBoundsInThisWindow();
+            const minMargin = 20;
+            const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+            const desiredLeft = center.x - dialogWidth / 2;
+            const desiredTop = center.y - dialogHeight / 2;
+            const left = clamp(desiredLeft, viewport.left + minMargin, viewport.right - dialogWidth - minMargin);
+            const top = clamp(desiredTop, viewport.top + minMargin, viewport.bottom - dialogHeight - minMargin);
+
+            dialog.style.left = `${left}px`;
+            dialog.style.top = `${top}px`;
+            dialog.style.transform = 'none';
+        } catch (e) {
+            console.warn('bulk-node-edit-dialog positioning failed', e);
+            dialog.style.left = '50%';
+            dialog.style.top = '50%';
+            dialog.style.transform = 'translate(-50%, -50%)';
+        }
+
+        dialog.style.visibility = 'visible';
+        dialog.style.pointerEvents = 'auto';
+
+        requestAnimationFrame(() => {
+            try { if (typeof adjustPopupPosition === 'function') adjustPopupPosition(dialog); } catch (_) {}
+        });
         
         // チェックボックスのイベントリスナーを追加
         document.getElementById('bulk-edit-coords').addEventListener('change', function() {
@@ -11299,8 +11429,10 @@ document.addEventListener('DOMContentLoaded', () => {
         popup.style.display = 'block';
         
         // ポップアップを一度表示してサイズを取得
+        // 注意: visibility:hidden の間に pointer-events が有効だとクリックを吸うことがあるため、計測中は無効化する
         popup.style.display = 'block';
         popup.style.visibility = 'hidden'; // 一時的に非表示にしてサイズ取得
+        popup.style.pointerEvents = 'none';
         
         // ポップアップのサイズを取得
         const popupRect = popup.getBoundingClientRect();
@@ -11310,23 +11442,40 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('🔍 ポップアップサイズ:', { width: popupWidth, height: popupHeight });
         
         // 統合版(iframe埋め込み)では window.innerHeight が巨大になり、画面外に配置されることがある。
-        // そのため「実際に見えている領域中心」を基準に配置する。
+        // そのため「実際に見えている iframe 可視領域(=viewport.left/top付き)」を基準に配置する。
         const center = getVisibleCenterInThisWindow();
-        const windowWidth = center.viewportW;
-        const windowHeight = center.viewportH;
+        const viewport = center.viewport || getVisibleViewportBoundsInThisWindow();
         const minMargin = 20;
 
-        // 画面中央に配置
-        const left = Math.max(minMargin, Math.min(windowWidth - popupWidth - minMargin, center.x - popupWidth / 2));
-        const top = Math.max(minMargin, Math.min(windowHeight - popupHeight - minMargin, center.y - popupHeight / 2));
-        
-        console.log('🔍 ポップアップ位置:', { left, top, windowWidth, windowHeight });
-        
+        const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+        // まずは中心に配置（viewport.left/top を考慮してクランプ）
+        const desiredLeft = center.x - popupWidth / 2;
+        const desiredTop = center.y - popupHeight / 2;
+        const left = clamp(desiredLeft, viewport.left + minMargin, viewport.right - popupWidth - minMargin);
+        const top = clamp(desiredTop, viewport.top + minMargin, viewport.bottom - popupHeight - minMargin);
+
+        console.log('🔍 ポップアップ位置:', {
+            left,
+            top,
+            viewport
+        });
+
+        popup.style.position = 'fixed';
+        popup.style.zIndex = popup.style.zIndex || '99999';
         popup.style.left = `${left}px`;
         popup.style.top = `${top}px`;
-        popup.style.position = 'fixed';
-        popup.style.visibility = 'visible'; // 表示に戻す
+
+        // いったん表示に戻す（ただし、描画・レイアウト確定後に最終クランプをかける）
+        popup.style.visibility = 'visible';
+        popup.style.pointerEvents = 'auto';
         popup.style.display = 'block';
+
+        // DevTools(F12)でのリサイズ相当の再計測を開いた直後に行う
+        // （開いた瞬間は rect/viewport がズレるケースがあるため）
+        requestAnimationFrame(() => {
+            try { adjustPopupPosition(popup); } catch (_) {}
+        });
         
         // ポップアップが実際に表示されているかチェック
         setTimeout(() => {
@@ -12860,7 +13009,14 @@ document.addEventListener('DOMContentLoaded', () => {
         popup.style.position = 'fixed';
         popup.style.left = `${left}px`;
         popup.style.top = `${top}px`;
-        popup.style.zIndex = '10000'; // 非常に高いz-indexを設定
+        // z-indexを下げない（他のoverlay/tooltip等の背面に回るのを防止）
+        try {
+            const computedZ = parseInt((popup.style.zIndex || window.getComputedStyle(popup).zIndex || '0'), 10);
+            const safeZ = Number.isFinite(computedZ) ? computedZ : 0;
+            popup.style.zIndex = String(Math.max(99999, safeZ));
+        } catch (_) {
+            popup.style.zIndex = '99999';
+        }
         
         console.log('🎯 ポップアップ位置設定完了:', {
             styleLeft: popup.style.left,
@@ -13380,6 +13536,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         popup.style.display = 'block';
         popup.style.visibility = 'visible';
+        // 初期化時に pointer-events:none にしているため、表示時に必ず戻す
+        popup.style.pointerEvents = 'auto';
 
         // ポップアップを画面中央に配置
         const popupRect = popup.getBoundingClientRect();
@@ -13391,7 +13549,7 @@ document.addEventListener('DOMContentLoaded', () => {
         popup.style.left = `${left}px`;
         popup.style.top = `${top}px`;
         popup.style.position = 'fixed';
-        popup.style.zIndex = '10000';
+        popup.style.zIndex = '99999';
 
         try { adjustPopupPosition(popup); } catch (_) {}
         
@@ -13436,6 +13594,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         elements.nodePropsPopup.style.display = 'none';
+        elements.nodePropsPopup.style.visibility = 'hidden';
+        elements.nodePropsPopup.style.pointerEvents = 'none';
         runFullAnalysis();
         drawOnCanvas();
     };
@@ -13443,6 +13603,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // 新しい節点プロパティポップアップのキャンセルボタンの処理
     document.getElementById('popup-node-props-cancel').onclick = () => {
         elements.nodePropsPopup.style.display = 'none';
+        elements.nodePropsPopup.style.visibility = 'hidden';
+        elements.nodePropsPopup.style.pointerEvents = 'none';
     };
 
     // 節点削除ボタンの処理
@@ -13465,6 +13627,8 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // ポップアップを閉じる
             elements.nodePropsPopup.style.display = 'none';
+            elements.nodePropsPopup.style.visibility = 'hidden';
+            elements.nodePropsPopup.style.pointerEvents = 'none';
             
             // 選択状態をリセット
             selectedNodeIndex = null;
@@ -15638,7 +15802,17 @@ const loadPreset = (index) => {
         elements.memberLoadsTable.innerHTML = '';
         p.nodes.forEach(n => addRow(elements.nodesTable, [`#`, `<input type="number" value="${n.x}">`, `<input type="number" value="${n.y}">`, `<select><option value="free"${n.s==='f'?' selected':''}>自由</option><option value="pinned"${n.s==='p'?' selected':''}>ピン</option><option value="fixed"${n.s==='x'?' selected':''}>固定</option><option value="roller_x_fixed">ローラー(垂直自由)</option><option value="roller_y_fixed"${n.s==='r'?' selected':''}>ローラー(水平自由)</option></select>`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.001">`], false));
         p.members.forEach(m => {
-            const E_N_mm2 = m.E || '205000';
+            // プリセット内の E は内部単位(kN/m²)で持っている場合がある。
+            // UIの入力欄/セレクトは N/mm² (=MPa) を期待し、parseInputs で *1000 して kN/m² に変換する。
+            // ここで換算しておかないと E が1000倍になり、変位が極端に小さくなる。
+            let E_N_mm2 = (m.E ?? '205000');
+            try {
+                const raw = Number(E_N_mm2);
+                if (Number.isFinite(raw)) {
+                    // 典型: 2.05e8(kN/m²) → 2.05e5(N/mm²)
+                    E_N_mm2 = (raw > 1e6) ? (raw / 1000) : raw;
+                }
+            } catch (_) {}
             const F_N_mm2 = m.F || '235';
             const I_m4 = m.I || 1e-9;
             const A_m2 = m.A || 1e-3;
@@ -16454,16 +16628,29 @@ const loadPreset = (index) => {
                 popup.style.position = 'fixed';
                 popup.style.zIndex = '200000';
 
+                const viewport = getVisibleViewportBoundsInThisWindow();
+
                 // CSS読み込み漏れ/上書き対策で最小サイズを確保
-                if (!popup.style.minWidth) popup.style.minWidth = '280px';
-                if (!popup.style.minHeight) popup.style.minHeight = '200px';
+                // 耐力壁ポップアップは入力項目が多いので、ここで確実に横幅を確保する
+                const isShearWallPopup = (popup.id === 'shear-wall-props-popup') || popup.classList.contains('shear-wall-props-popup-wide');
+                if (isShearWallPopup) {
+                    const availableW = Math.max(320, viewport.width - 40);
+                    const targetW = Math.min(920, availableW);
+                    const targetMinW = Math.min(680, targetW);
+                    popup.style.width = `${targetW}px`;
+                    popup.style.minWidth = `${targetMinW}px`;
+                    popup.style.maxWidth = `calc(100vw - 40px)`;
+                    popup.style.maxHeight = `calc(100vh - 40px)`;
+                    popup.style.overflowY = 'auto';
+                } else {
+                    if (!popup.style.minWidth) popup.style.minWidth = '280px';
+                    if (!popup.style.minHeight) popup.style.minHeight = '200px';
+                }
 
                 const rect = popup.getBoundingClientRect();
                 const w = rect.width || 520;
                 const h = rect.height || 420;
                 const margin = 10;
-
-                const viewport = getVisibleViewportBoundsInThisWindow();
 
                 // 可視viewport中央（埋め込み時も含め共通）
                 let left = viewport.left + (viewport.width - w) / 2;

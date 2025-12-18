@@ -805,13 +805,13 @@
                 <input id="sw-props-off-lower" type="number" min="0" step="1" value="50" placeholder="下">
             </div>
 
-            <label>置換柱 せん断剛性</label>
+            <label>置換柱 せん断剛性 (kN/m)</label>
             <div style="display:flex; gap:10px; align-items:center;">
                 <input id="sw-props-k-shear" type="number" min="0" step="1" style="width:100%; min-width:0;">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-k-shear-rigid" type="checkbox">剛</label>
             </div>
 
-            <label>置換柱 曲げ剛性 EI</label>
+            <label>置換柱 曲げ剛性 EI (kN・m^2)</label>
             <div style="display:flex; gap:10px; align-items:center;">
                 <input id="sw-props-ei" type="number" min="0" step="1" style="width:100%; min-width:0;">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-ei-rigid" type="checkbox">剛</label>
@@ -820,33 +820,41 @@
             <div style="grid-column: 1 / -1; font-weight:bold; margin-top:6px;">接合部バネ Kx (kN/m)</div>
 
             <label>左下</label>
-            <div style="display:grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
+            <div style="display:grid; grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
+                <div style="font-size:12px; white-space:nowrap;">引張</div>
                 <input id="sw-props-kx-lb-t" type="number" min="0" step="1" placeholder="引張">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-lb-t-rigid" type="checkbox">剛</label>
+                <div style="font-size:12px; white-space:nowrap;">圧縮</div>
                 <input id="sw-props-kx-lb-c" type="number" min="0" step="1" placeholder="圧縮">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-lb-c-rigid" type="checkbox">剛</label>
             </div>
 
             <label>左上</label>
-            <div style="display:grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
+            <div style="display:grid; grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
+                <div style="font-size:12px; white-space:nowrap;">引張</div>
                 <input id="sw-props-kx-lt-t" type="number" min="0" step="1" placeholder="引張">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-lt-t-rigid" type="checkbox">剛</label>
+                <div style="font-size:12px; white-space:nowrap;">圧縮</div>
                 <input id="sw-props-kx-lt-c" type="number" min="0" step="1" placeholder="圧縮">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-lt-c-rigid" type="checkbox">剛</label>
             </div>
 
             <label>右下</label>
-            <div style="display:grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
+            <div style="display:grid; grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
+                <div style="font-size:12px; white-space:nowrap;">引張</div>
                 <input id="sw-props-kx-rb-t" type="number" min="0" step="1" placeholder="引張">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-rb-t-rigid" type="checkbox">剛</label>
+                <div style="font-size:12px; white-space:nowrap;">圧縮</div>
                 <input id="sw-props-kx-rb-c" type="number" min="0" step="1" placeholder="圧縮">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-rb-c-rigid" type="checkbox">剛</label>
             </div>
 
             <label>右上</label>
-            <div style="display:grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
+            <div style="display:grid; grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
+                <div style="font-size:12px; white-space:nowrap;">引張</div>
                 <input id="sw-props-kx-rt-t" type="number" min="0" step="1" placeholder="引張">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-rt-t-rigid" type="checkbox">剛</label>
+                <div style="font-size:12px; white-space:nowrap;">圧縮</div>
                 <input id="sw-props-kx-rt-c" type="number" min="0" step="1" placeholder="圧縮">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-rt-c-rigid" type="checkbox">剛</label>
             </div>
