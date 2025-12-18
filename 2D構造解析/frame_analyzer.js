@@ -4344,11 +4344,9 @@ document.addEventListener('DOMContentLoaded', () => {
             currentMember.iy = row.dataset.iy;
 
             // 各行のバネ剛性を取得（該当セル内の .spring-inputs を探す）
-            // UI入力単位を内部単位へ変換する
-            // UI: Kx,Ky -> kN/mm  , Kr -> kN·mm/rad
-            // 内部計算: Kx,Ky -> kN/m   (1 kN/mm = 1000 kN/m)
-            //            Kr -> kN·m/rad (1 kN·mm = 0.001 kN·m)
-            const convertSpringFromUI = (Kx_ui, Ky_ui, Kr_ui) => ({ Kx: Kx_ui * 1000, Ky: Ky_ui * 1000, Kr: Kr_ui * 1e-3 });
+            // IMPORTANT: 履歴/CSV保存では「UI表示単位のまま」保持する。
+            // - UI: Kx,Ky -> kN/mm  , Kr -> kN·mm/rad
+            // - 解析時の単位変換(kN/m, kN·m)は parseInputs() 側で行う。
 
             const readSpringFromCell = (cell) => {
                 if (!cell) return null;
@@ -4366,20 +4364,23 @@ document.addEventListener('DOMContentLoaded', () => {
                     const v = parseFloat(el.value);
                     return Number.isFinite(v) ? v : 0;
                 };
-                const KxT_raw = parse(kxEl);
-                const KxC_raw = kxCEl ? parse(kxCEl) : KxT_raw;
-                const Ky_raw = parse(kyEl);
-                const Kr_raw = parse(krEl); // UI入力値 (kN·mm/rad)
-                const { Kx: KxT, Ky, Kr } = convertSpringFromUI(KxT_raw, Ky_raw, Kr_raw);
-                const { Kx: KxC } = convertSpringFromUI(KxC_raw, 0, 0);
+                const KxT_ui = parse(kxEl); // kN/mm
+                const KxC_ui = kxCEl ? parse(kxCEl) : KxT_ui; // kN/mm
+                const Ky_ui = parse(kyEl); // kN/mm
+                const Kr_ui = parse(krEl); // kN·mm/rad
                 const isRigidKx = rigidKxEl ? rigidKxEl.checked : false;
                 const isRigidKy = rigidKyEl ? rigidKyEl.checked : false;
                 const isRigidKr = rigidKrEl ? rigidKrEl.checked : false;
-                const EPS_LOCAL = (typeof EPS_SPRING !== 'undefined') ? EPS_SPRING : 1e-6;
-                if (!isRigidKx && !isRigidKy && (KxT === 0 || KxT === null) && (Ky === 0 || Ky === null)) {
-                    return { Kx: EPS_LOCAL, Kx_tension: EPS_LOCAL, Kx_compression: EPS_LOCAL, Ky: EPS_LOCAL, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
-                }
-                return { Kx: KxT || 0, Kx_tension: KxT || 0, Kx_compression: (KxC || KxT || 0), Ky: Ky || 0, Kr: Kr || 0, rigidKx: isRigidKx, rigidKy: isRigidKy, rigidKr: isRigidKr };
+                return {
+                    Kx: KxT_ui || 0,
+                    Kx_tension: KxT_ui || 0,
+                    Kx_compression: (KxC_ui || KxT_ui || 0),
+                    Ky: Ky_ui || 0,
+                    Kr: Kr_ui || 0,
+                    rigidKx: isRigidKx,
+                    rigidKy: isRigidKy,
+                    rigidKr: isRigidKr
+                };
             };
 
             // 始端バネ
@@ -4926,6 +4927,64 @@ document.addEventListener('DOMContentLoaded', () => {
                                 if (box) box.style.display = (selectEl.value === 'spring') ? '' : 'none';
                             };
 
+                            // 後方互換: 旧データが「内部単位(kN/m, kN·m)」で保存されてしまっていた場合に
+                            // UI単位(kN/mm, kN·mm)へ補正して復元する。
+                            const normalizeSpringUiUnits = (springObj) => {
+                                if (!springObj || typeof springObj !== 'object') return springObj;
+
+                                const toNum = (v) => {
+                                    const n = Number.parseFloat(v);
+                                    return Number.isFinite(n) ? n : null;
+                                };
+
+                                const kx = toNum(springObj.Kx);
+                                const ky = toNum(springObj.Ky);
+                                const kr = toNum(springObj.Kr);
+                                const kxC = toNum(
+                                    (springObj.Kx_c !== undefined) ? springObj.Kx_c
+                                        : (springObj.KxC !== undefined) ? springObj.KxC
+                                            : (springObj.Kx_compression !== undefined) ? springObj.Kx_compression
+                                                : null
+                                );
+
+                                // ヒューリスティック:
+                                // - UI(kN/mm)としては現実的に大き過ぎる値(>200)は、旧形式の kN/m の可能性が高い。
+                                //   (例: 10000 kN/m は UI 10 kN/mm)
+                                const maxTrans = Math.max(
+                                    0,
+                                    (kx !== null ? Math.abs(kx) : 0),
+                                    (kxC !== null ? Math.abs(kxC) : 0),
+                                    (ky !== null ? Math.abs(ky) : 0)
+                                );
+                                const looksLikeKnPerM = maxTrans > 200;
+                                if (!looksLikeKnPerM) return springObj;
+
+                                const scaleDown = (v) => (v === null ? null : v / 1000); // kN/m -> kN/mm
+                                const scaleUp = (v) => (v === null ? null : v * 1000);   // kN·m -> kN·mm
+
+                                const out = { ...springObj };
+                                if (kx !== null) out.Kx = scaleDown(kx);
+                                if (ky !== null) out.Ky = scaleDown(ky);
+                                if (kr !== null) out.Kr = scaleUp(kr);
+                                if (out.Kx_c !== undefined) {
+                                    const n = toNum(out.Kx_c);
+                                    if (n !== null) out.Kx_c = scaleDown(n);
+                                }
+                                if (out.KxC !== undefined) {
+                                    const n = toNum(out.KxC);
+                                    if (n !== null) out.KxC = scaleDown(n);
+                                }
+                                if (out.Kx_compression !== undefined) {
+                                    const n = toNum(out.Kx_compression);
+                                    if (n !== null) out.Kx_compression = scaleDown(n);
+                                }
+                                if (out.Kx_tension !== undefined) {
+                                    const n = toNum(out.Kx_tension);
+                                    if (n !== null) out.Kx_tension = scaleDown(n);
+                                }
+                                return out;
+                            };
+
                             if (connSelects && connSelects.length >= 2) {
                                 const iSel = connSelects[0];
                                 const jSel = connSelects[1];
@@ -4935,37 +4994,39 @@ document.addEventListener('DOMContentLoaded', () => {
                                 try { showSpringBoxFor(iSel); } catch(e){}
                                 try { showSpringBoxFor(jSel); } catch(e){}
 
-                                // バネ値の復元（UI単位で保存されている想定）
+                                // バネ値の復元（UI単位: kN/mm, kN·mm/rad）
                                 if (m.spring_i && iSel.value === 'spring') {
+                                    const springUi = normalizeSpringUiUnits(m.spring_i);
                                     const iBox = iSel.closest('.conn-cell')?.querySelector('.spring-inputs');
                                     if (iBox) {
                                         const kx = iBox.querySelector('.spring-kx');
                                         const kxC = iBox.querySelector('.spring-kx-c');
                                         const ky = iBox.querySelector('.spring-ky');
                                         const kr = iBox.querySelector('.spring-kr');
-                                        if (kx && m.spring_i.Kx !== undefined) kx.value = Number(m.spring_i.Kx);
+                                        if (kx && springUi.Kx !== undefined) kx.value = Number(springUi.Kx);
                                         if (kxC) {
-                                            const v = (m.spring_i.Kx_c !== undefined) ? m.spring_i.Kx_c : (m.spring_i.KxC !== undefined ? m.spring_i.KxC : (m.spring_i.Kx_compression !== undefined ? m.spring_i.Kx_compression : m.spring_i.Kx));
+                                            const v = (springUi.Kx_c !== undefined) ? springUi.Kx_c : (springUi.KxC !== undefined ? springUi.KxC : (springUi.Kx_compression !== undefined ? springUi.Kx_compression : springUi.Kx));
                                             if (v !== undefined) kxC.value = Number(v);
                                         }
-                                        if (ky && m.spring_i.Ky !== undefined) ky.value = Number(m.spring_i.Ky);
-                                        if (kr && m.spring_i.Kr !== undefined) kr.value = Number(m.spring_i.Kr);
+                                        if (ky && springUi.Ky !== undefined) ky.value = Number(springUi.Ky);
+                                        if (kr && springUi.Kr !== undefined) kr.value = Number(springUi.Kr);
                                     }
                                 }
                                 if (m.spring_j && jSel.value === 'spring') {
+                                    const springUi = normalizeSpringUiUnits(m.spring_j);
                                     const jBox = jSel.closest('.conn-cell')?.querySelector('.spring-inputs');
                                     if (jBox) {
                                         const kx = jBox.querySelector('.spring-kx');
                                         const kxC = jBox.querySelector('.spring-kx-c');
                                         const ky = jBox.querySelector('.spring-ky');
                                         const kr = jBox.querySelector('.spring-kr');
-                                        if (kx && m.spring_j.Kx !== undefined) kx.value = Number(m.spring_j.Kx);
+                                        if (kx && springUi.Kx !== undefined) kx.value = Number(springUi.Kx);
                                         if (kxC) {
-                                            const v = (m.spring_j.Kx_c !== undefined) ? m.spring_j.Kx_c : (m.spring_j.KxC !== undefined ? m.spring_j.KxC : (m.spring_j.Kx_compression !== undefined ? m.spring_j.Kx_compression : m.spring_j.Kx));
+                                            const v = (springUi.Kx_c !== undefined) ? springUi.Kx_c : (springUi.KxC !== undefined ? springUi.KxC : (springUi.Kx_compression !== undefined ? springUi.Kx_compression : springUi.Kx));
                                             if (v !== undefined) kxC.value = Number(v);
                                         }
-                                        if (ky && m.spring_j.Ky !== undefined) ky.value = Number(m.spring_j.Ky);
-                                        if (kr && m.spring_j.Kr !== undefined) kr.value = Number(m.spring_j.Kr);
+                                        if (ky && springUi.Ky !== undefined) ky.value = Number(springUi.Ky);
+                                        if (kr && springUi.Kr !== undefined) kr.value = Number(springUi.Kr);
                                     }
                                 }
                             }
@@ -11036,8 +11097,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let dispScale = parseFloat(elements.animScaleInput.value);
 
-        if (isNaN(dispScale)) {
-            dispScale = lastDisplacementScale || 0;
+        // 自動倍率（初回は lastDisplacementScale が 0 のことがあるため、D から推定する）
+        if (!Number.isFinite(dispScale)) {
+            if (Number.isFinite(lastDisplacementScale) && lastDisplacementScale > 0) {
+                dispScale = lastDisplacementScale;
+            } else {
+                try {
+                    const maxAbsDisp = (() => {
+                        let m = 0;
+                        if (Array.isArray(D_global)) {
+                            for (const v of D_global) {
+                                const n = Number(v);
+                                if (!Number.isFinite(n)) continue;
+                                const a = Math.abs(n);
+                                if (a > m) m = a;
+                            }
+                        }
+                        return m;
+                    })();
+
+                    const modelSize = (() => {
+                        if (!Array.isArray(nodes) || nodes.length === 0) return 1;
+                        const xs = nodes.map(n => Number(n?.x)).filter(Number.isFinite);
+                        const ys = nodes.map(n => Number(n?.y)).filter(Number.isFinite);
+                        if (xs.length === 0 || ys.length === 0) return 1;
+                        const w = Math.max(...xs) - Math.min(...xs);
+                        const h = Math.max(...ys) - Math.min(...ys);
+                        const s = Math.max(w, h);
+                        return Number.isFinite(s) && s > 0 ? s : 1;
+                    })();
+
+                    // 目標: 最大変位がモデル寸法の ~20% になるようにスケーリング
+                    const target = modelSize * 0.2;
+                    const eps = 1e-12;
+                    dispScale = (maxAbsDisp > eps) ? (target / maxAbsDisp) : 0;
+
+                    // 異常値の抑制（極端な倍率で描画が破綻するのを防ぐ）
+                    if (!Number.isFinite(dispScale) || dispScale < 0) dispScale = 0;
+                    dispScale = Math.min(dispScale, 1e8);
+
+                    // 次回以降に使えるよう保持
+                    if (dispScale > 0) lastDisplacementScale = dispScale;
+                } catch (e) {
+                    dispScale = 0;
+                }
+            }
             elements.animScaleInput.placeholder = `自動(${dispScale.toFixed(2)})`;
         }
         
@@ -17047,6 +17151,12 @@ const loadPreset = (index) => {
                 else alert(msg);
             };
 
+            // 数値安定性のため、過度に大きい剛性倍率は避ける
+            // （剛棒や「剛」指定が極端に大きいと剛性マトリクスが悪条件化し、
+            // 置換柱のEI/kShearを変更しても結果が変わらないように見えることがあります）
+            const SHEAR_WALL_RIGID_BAR_MULT = 1e3;
+            const SHEAR_WALL_ULTRA_RIGID_MULT = 1e4;
+
             // 耐力壁の置換部材を作り直す前提なので、前回解析の行番号キー符号は無効化しておく
             try { window.__springAxialSignByMemberRowIndex = {}; } catch (_) {}
 
@@ -17303,8 +17413,8 @@ const loadPreset = (index) => {
                 // 剛棒（上下）: 端部ピン（側柱側）／中央は剛（置換柱と接続）
                 const rigidE = '205000';
                 const rigidF = '235';
-                const rigidI = Math.max(1e-4, sideI_m4 * 1e4);
-                const rigidA = Math.max(1e-2, sideA_m2 * 1e4);
+                const rigidI = Math.max(1e-4, sideI_m4 * SHEAR_WALL_RIGID_BAR_MULT);
+                const rigidA = Math.max(1e-2, sideA_m2 * SHEAR_WALL_RIGID_BAR_MULT);
                 const rigidZ = 1e-6;
 
                 // 上剛棒
@@ -17383,11 +17493,33 @@ const loadPreset = (index) => {
 
                 // 「剛」指定の場合は非常に大きい断面特性に置換（入力値は無視）
                 if (eiRigid) {
-                    replaceI_m4 = Math.max(1e-4, sideI_m4 * 1e6);
+                    replaceI_m4 = Math.max(1e-4, sideI_m4 * SHEAR_WALL_ULTRA_RIGID_MULT);
                 }
                 if (kShearRigid) {
-                    replaceA_m2 = Math.max(1e-2, sideA_m2 * 1e6);
+                    replaceA_m2 = Math.max(1e-2, sideA_m2 * SHEAR_WALL_ULTRA_RIGID_MULT);
                 }
+
+                // デバッグ（silent=false のときのみ）: 置換柱が解析に入る等価剛性を確認
+                try {
+                    if (!silent) {
+                        const EI_equiv = replaceE_kN_m2 * replaceI_m4; // kN*m^2
+                        const nu = SHEAR_WALL_NU;
+                        const G = replaceE_kN_m2 / (2 * (1 + nu));
+                        const As = replaceA_m2 / SHEAR_WALL_KAPPA;
+                        const kShear_equiv = (G > 0 && As > 0 && replaceL > 0) ? (G * As / replaceL) : 0; // kN/m
+                        console.log('🧱 耐力壁 置換柱等価剛性', {
+                            wallId,
+                            replaceL_m: replaceL,
+                            input_kShear_kN_per_m: kShear,
+                            input_EI_kN_m2: EI,
+                            A_m2: replaceA_m2,
+                            I_m4: replaceI_m4,
+                            kShear_equiv_kN_per_m: kShear_equiv,
+                            EI_equiv_kN_m2: EI_equiv,
+                            flags: { kShearRigid, eiRigid }
+                        });
+                    }
+                } catch (_) {}
 
                 addMemberRow({
                     iNode: lowerMid,
@@ -17435,6 +17567,22 @@ const loadPreset = (index) => {
 
         // UIイベント
         elements.addShearWallBtn.addEventListener('click', () => addShearWallRow());
+
+        // 明示的な反映ボタン（自動反映が失敗した場合の救済）
+        try {
+            if (elements.applyShearWallsBtn) {
+                elements.applyShearWallsBtn.addEventListener('click', () => {
+                    try {
+                        applyShearWallsToModel({ silent: false });
+                    } catch (e) {
+                        console.warn('耐力壁: 反映ボタンでエラー', e);
+                        alert('耐力壁の反映中にエラーが発生しました。コンソールをご確認ください。');
+                    }
+                });
+            }
+        } catch (e) {
+            console.warn('耐力壁: 反映ボタンのイベント登録に失敗', e);
+        }
 
         // 一覧表の入力が変わったら即反映（入力途中の連打を避けてデバウンス）
         try {
@@ -17903,9 +18051,25 @@ const loadPreset = (index) => {
 
     elements.calculateAndAnimateBtn.addEventListener('click', () => {
         runFullAnalysis();
-        if (lastResults && lastResults.D) {
-            animateDisplacement(lastResults.nodes, lastResults.members, lastResults.D, lastResults.memberLoads);
-        }
+        // calculate() が内部で setTimeout 再計算するケース（軸バネ反復など）でも
+        // 初回から確実にアニメーションを開始できるよう、結果が揃うまで短時間待つ。
+        const startedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const maxWaitMs = 6000;
+
+        const tryStart = () => {
+            const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+            if (lastResults && lastResults.D && lastResults.D.length > 0) {
+                animateDisplacement(lastResults.nodes, lastResults.members, lastResults.D, lastResults.memberLoads);
+                return;
+            }
+            if ((now - startedAt) > maxWaitMs) {
+                console.warn('アニメーション開始を中止: 解析結果が準備できませんでした', { lastResults });
+                return;
+            }
+            requestAnimationFrame(tryStart);
+        };
+
+        requestAnimationFrame(tryStart);
     });
     
     document.body.classList.remove('section-check-disabled');
