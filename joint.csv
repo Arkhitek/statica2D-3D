@@ -1,0 +1,9 @@
+# joint.csv サンプル
+# 必須列: id,name,kx_t_kN_per_mm,kx_c_kN_per_mm,rigid
+# 任意列: allow_t_kN,allow_c_kN (短期許容耐力。単位: kN)
+# - rigid は 1/0 (1なら剛扱い)
+# - kx_c_kN_per_mm を省略した場合、kx_t を流用します
+id,name,kx_t_kN_per_mm,kx_c_kN_per_mm,rigid,allow_t_kN,allow_c_kN
+J001,一般(例),5,5,0,30,30
+J002,引張のみ硬い(例),10,3,0,40,20
+J003,剛(例),0,0,1,999,999

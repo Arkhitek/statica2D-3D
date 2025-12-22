@@ -518,6 +518,40 @@ table {
     background-color: var(--color-surface);
 }
 
+/* 部材(物性値・接合条件)の一覧表は列数が多いため、横スクロール前提で列幅を縮めない */
+#members-table {
+    table-layout: auto;
+    width: max-content;
+    min-width: 100%;
+}
+
+#members-table th,
+#members-table td {
+    white-space: nowrap;
+    word-wrap: normal;
+}
+
+/* 横スクロール時に先頭列（部材番号）を固定表示 */
+#members-table th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 30; /* ヘッダー(上) + 先頭列(左)の重なりを最前面に */
+    background-color: var(--color-surface);
+}
+
+#members-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background-color: var(--color-surface);
+}
+
+/* 固定列の境界が分かるように右罫線を強調 */
+#members-table th:first-child,
+#members-table td:first-child {
+    border-right: 2px solid var(--color-border);
+}
+
 /* 耐力壁テーブル: 入力UIがセルからはみ出さないように制約 */
 #shear-walls-table input[type="number"] {
     max-width: 100%;
@@ -859,6 +893,18 @@ body.model-fullscreen-active #model-workspace-root .model-controls,
 body.model-fullscreen-active #model-workspace-root .canvas-controls > div:first-child,
 body.model-fullscreen-active #model-workspace-root .canvas-controls .help-icon {
     display: none;
+}
+
+/* 全画面はモデル閲覧・編集に集中（計算/保存・AI生成はツールバー側に寄せる） */
+body.model-fullscreen-active #model-workspace-root #calculate-btn,
+body.model-fullscreen-active #model-workspace-root #calculate-and-animate-btn,
+body.model-fullscreen-active #model-workspace-root .file-controls,
+body.model-fullscreen-active #model-workspace-root #save-btn,
+body.model-fullscreen-active #model-workspace-root #load-btn,
+body.model-fullscreen-active #model-workspace-root #create-share-link-btn,
+body.model-fullscreen-active #model-workspace-root #ai-generator-section,
+body.model-fullscreen-active #model-workspace-root #ai-features-toggle {
+    display: none !important;
 }
 
 body.model-fullscreen-active #model-workspace-root #fit-view-model,

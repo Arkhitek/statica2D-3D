@@ -6,6 +6,25 @@
     const TOOLBAR_ID = 'model-fullscreen-toolbar';
     const CONTENT_ID = 'model-fullscreen-content';
     const PLACEHOLDER_ID = 'model-fullscreen-placeholder';
+    const FLOATING_PLACEHOLDER_PREFIX = 'model-fs-floating-ph-';
+
+    // 右クリック編集等で使う「浮遊UI」は model-workspace-root の外にあるため、全画面時にオーバーレイへ一緒に移動する
+    const FLOATING_IDS = [
+        'node-context-menu',
+        'member-props-popup',
+        'node-props-popup',
+        'node-load-popup',
+        'node-coords-popup',
+        'shear-wall-props-popup',
+        'brace-wall-props-popup',
+        'add-member-popup',
+        'shear-wall-add-type-popup',
+        'brace-wall-add-kind-popup',
+        'frame-generator-modal',
+        'share-link-modal',
+    ];
+
+    const floatingRestore = new Map();
 
     const getEl = (id) => document.getElementById(id);
 
@@ -35,14 +54,31 @@
     };
 
     const requestRedraw = () => {
-        // 既存のデバッグ関数を活用（あれば）
-        if (typeof window.triggerManualResize === 'function') {
-            window.triggerManualResize();
-            return;
-        }
-        if (typeof window.drawOnCanvas === 'function') {
-            window.drawOnCanvas();
-        }
+        const doResize = () => {
+            if (typeof window.triggerManualResize === 'function') {
+                window.triggerManualResize();
+                return;
+            }
+            try {
+                window.dispatchEvent(new Event('resize'));
+            } catch (_) {
+                // ignore
+            }
+        };
+
+        const doDraw = () => {
+            if (typeof window.drawOnCanvas === 'function') {
+                window.drawOnCanvas();
+            }
+        };
+
+        // レイアウト確定後にサイズ→描画（1〜2フレーム遅延）
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                doResize();
+                doDraw();
+            });
+        });
     };
 
     const isActive = () => document.body.classList.contains(BODY_ACTIVE_CLASS);
@@ -68,6 +104,42 @@
         document.body.appendChild(overlay);
 
         return overlay;
+    };
+
+    const moveFloatingUiIntoOverlay = (overlay) => {
+        if (!overlay) return;
+        for (const id of FLOATING_IDS) {
+            const el = getEl(id);
+            if (!el) continue;
+            if (floatingRestore.has(id)) continue;
+
+            const parent = el.parentNode;
+            if (!parent) continue;
+
+            const placeholder = document.createElement('div');
+            placeholder.id = `${FLOATING_PLACEHOLDER_PREFIX}${id}`;
+            placeholder.style.display = 'none';
+            parent.insertBefore(placeholder, el);
+
+            floatingRestore.set(id, { placeholder, parent });
+            overlay.appendChild(el);
+        }
+    };
+
+    const restoreFloatingUi = () => {
+        for (const [id, info] of floatingRestore.entries()) {
+            const el = getEl(id);
+            const { placeholder, parent } = info || {};
+            try {
+                if (el && placeholder && parent) {
+                    parent.insertBefore(el, placeholder);
+                    placeholder.remove();
+                }
+            } catch (_) {
+                // ignore
+            }
+        }
+        floatingRestore.clear();
     };
 
     const buildToolbar = () => {
@@ -109,6 +181,9 @@
         addBtn({ icon: '🖱', tip: '選択/移動 (S)', onClick: () => safeClick('mode-select') });
         addBtn({ icon: '●+', tip: '節点追加 (N)', onClick: () => safeClick('mode-add-node') });
         addBtn({ icon: '━+', tip: '部材追加 (M)', onClick: () => safeClick('mode-add-member') });
+        if (getEl('mode-add-shear-wall')) {
+            addBtn({ icon: '🧱+', tip: '耐力壁追加', onClick: () => safeClick('mode-add-shear-wall') });
+        }
         addBtn({ icon: '↩', tip: '元に戻す (Ctrl+Z)', onClick: () => safeClick('undo-btn') });
 
         addSep();
@@ -117,6 +192,18 @@
         addBtn({ icon: '⛶', tip: '全体表示', onClick: () => safeClick('fit-view-model') });
         addBtn({ icon: '+', tip: '拡大', onClick: () => safeClick('zoom-in-btn') });
         addBtn({ icon: '−', tip: '縮小', onClick: () => safeClick('zoom-out-btn') });
+
+        addSep();
+
+        addBtn({
+            icon: '▶',
+            tip: '計算開始',
+            onClick: () => {
+                if (!safeClick('calculate-and-animate-btn')) {
+                    safeClick('calculate-btn');
+                }
+            },
+        });
 
         addSep();
 
@@ -135,6 +222,9 @@
         }
         if (getEl('show-spring-stiffness')) {
             addBtn({ icon: '🌀', tip: 'バネ定数/剛性表示切替', onClick: () => safeToggleCheckbox('show-spring-stiffness') });
+        }
+        if (getEl('show-brace-names')) {
+            addBtn({ icon: '🏷', tip: 'ブレース名表示切替', onClick: () => safeToggleCheckbox('show-brace-names') });
         }
 
         addSep();
@@ -197,6 +287,9 @@
 
         buildToolbar();
 
+        // 右クリック編集のポップアップ等もオーバーレイへ
+        moveFloatingUiIntoOverlay(overlay);
+
         content.appendChild(workspace);
         document.body.classList.add(BODY_ACTIVE_CLASS);
 
@@ -210,6 +303,16 @@
         }
 
         requestRedraw();
+
+        // 追い打ち（Fullscreen API の解像度変更・UI隠し後に再度）
+        setTimeout(() => {
+            requestRedraw();
+            // 初回は自動で全体表示にも寄せる（効かない場合があるため遅延）
+            setTimeout(() => {
+                safeClick('fit-view-model');
+                requestRedraw();
+            }, 0);
+        }, 0);
     };
 
     const exitFullscreenMode = async () => {
@@ -225,6 +328,9 @@
 
         document.body.classList.remove(BODY_ACTIVE_CLASS);
 
+        // 浮遊UIを元に戻す
+        restoreFloatingUi();
+
         try {
             if (document.fullscreenElement && document.exitFullscreen) {
                 await document.exitFullscreen();
@@ -239,6 +345,7 @@
         }
 
         requestRedraw();
+        setTimeout(() => requestRedraw(), 0);
     };
 
     // グローバルにも出しておく（デバッグ用）

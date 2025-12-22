@@ -2276,15 +2276,32 @@ let firstMemberNode = null;
 let selectedNodeIndex = null;
 let selectedMemberIndex = null;
 
+// 耐力壁（ブレース置換）: キャンバス2点クリック追加用の状態
+let shearWallAddStartNodeId = null;
+let shearWallAddStartPointModel = null; // 投影平面上の座標 {x,y}
+let shearWallAddPlane = null; // { projectionMode, depthAxis, depthValue }
+let pendingAddShearWallFlowTarget = 'table';
+let pendingAddShearWallType = null; // 'brace' | 'wall'
+let pendingBraceWallKind = null; // 'tension' | 'both'
+let currentMouseX = 0;
+let currentMouseY = 0;
+
 document.addEventListener('DOMContentLoaded', () => {
     // DOM Elements をグローバル変数に割り当て
     elements = {
         nodesTable: document.getElementById('nodes-table').getElementsByTagName('tbody')[0],
         membersTable: document.getElementById('members-table').getElementsByTagName('tbody')[0],
+        springElementsTable: document.getElementById('spring-elements-table') ? document.getElementById('spring-elements-table').getElementsByTagName('tbody')[0] : null,
+        shearWallsTable: document.getElementById('shear-walls-table') ? document.getElementById('shear-walls-table').getElementsByTagName('tbody')[0] : null,
+        braceWallsTable: document.getElementById('brace-walls-table') ? document.getElementById('brace-walls-table').getElementsByTagName('tbody')[0] : null,
         nodeLoadsTable: document.getElementById('node-loads-table').getElementsByTagName('tbody')[0],
         memberLoadsTable: document.getElementById('member-loads-table').getElementsByTagName('tbody')[0],
         addNodeBtn: document.getElementById('add-node-btn'),
         addMemberBtn: document.getElementById('add-member-btn'),
+        addSpringElementRowBtn: document.getElementById('add-spring-element-row-btn'),
+        addShearWallBtn: document.getElementById('add-shear-wall-btn'),
+        wallCsvFileInput: document.getElementById('wall-csv-file'),
+        jointCsvFileInput: document.getElementById('joint-csv-file'),
         addNodeLoadBtn: document.getElementById('add-node-load-btn'),
         addMemberLoadBtn: document.getElementById('add-member-load-btn'),
         calculateBtn: document.getElementById('calculate-btn'),
@@ -2308,6 +2325,7 @@ document.addEventListener('DOMContentLoaded', () => {
         modeSelectBtn: document.getElementById('mode-select'),
         modeAddNodeBtn: document.getElementById('mode-add-node'),
         modeAddMemberBtn: document.getElementById('mode-add-member'),
+        modeAddShearWallBtn: document.getElementById('mode-add-shear-wall'),
         undoBtn: document.getElementById('undo-btn'),
         nodeContextMenu: document.getElementById('node-context-menu'),
         memberPropsPopup: document.getElementById('member-props-popup'),
@@ -2316,6 +2334,63 @@ document.addEventListener('DOMContentLoaded', () => {
         nodeLoadPopup: document.getElementById('node-load-popup'),
         nodeCoordsPopup: document.getElementById('node-coords-popup'),
         addMemberPopup: document.getElementById('add-member-popup'),
+        shearWallAddTypePopup: document.getElementById('shear-wall-add-type-popup'),
+        swAddTypeCloseBtn: document.getElementById('sw-add-type-close'),
+        swAddTypeWallBtn: document.getElementById('sw-add-type-wall'),
+        swAddTypeBraceBtn: document.getElementById('sw-add-type-brace'),
+        braceWallAddKindPopup: document.getElementById('brace-wall-add-kind-popup'),
+        bwAddKindCloseBtn: document.getElementById('bw-add-kind-close'),
+        bwAddKindTensionBtn: document.getElementById('bw-add-kind-tension'),
+        bwAddKindBothBtn: document.getElementById('bw-add-kind-both'),
+        braceWallPropsPopup: document.getElementById('brace-wall-props-popup'),
+        bwPropsId: document.getElementById('bw-props-id'),
+        bwPropsCloseBtn: document.getElementById('bw-props-close'),
+        bwPropsApplyBtn: document.getElementById('bw-props-apply'),
+        bwPropsEnabled: document.getElementById('bw-props-enabled'),
+        bwPropsLb: document.getElementById('bw-props-lb'),
+        bwPropsLt: document.getElementById('bw-props-lt'),
+        bwPropsRb: document.getElementById('bw-props-rb'),
+        bwPropsRt: document.getElementById('bw-props-rt'),
+        bwPropsKind: document.getElementById('bw-props-kind'),
+        bwPropsPerMeter: document.getElementById('bw-props-per-meter'),
+        bwPropsKUnit: document.getElementById('bw-props-k-unit'),
+        bwPropsKShear: document.getElementById('bw-props-k-shear'),
+        bwPropsQAllowUnit: document.getElementById('bw-props-q-allow-unit'),
+        bwPropsQAllowShort: document.getElementById('bw-props-q-allow-short'),
+        bwPropsWallLibBox: document.getElementById('bw-props-walllib-box'),
+        bwPropsWallPreset: document.getElementById('bw-props-wall-preset'),
+        bwPropsSideColumnsEnabled: document.getElementById('bw-props-sidecolumns-enabled'),
+        bwPropsSideColumnsBox: document.getElementById('bw-props-sidecolumns-box'),
+        bwPropsLeftSectionBtn: document.getElementById('bw-props-left-section-btn'),
+        bwPropsLeftSectionLabel: document.getElementById('bw-props-left-section-label'),
+        bwPropsRightSectionBtn: document.getElementById('bw-props-right-section-btn'),
+        bwPropsRightSectionLabel: document.getElementById('bw-props-right-section-label'),
+        bwPropsOffsetBottomMm: document.getElementById('bw-props-offset-bottom-mm'),
+        bwPropsOffsetTopMm: document.getElementById('bw-props-offset-top-mm'),
+        bwPropsCornerKxTLb: document.getElementById('bw-props-corner-kx-t-lb'),
+        bwPropsCornerKxCLb: document.getElementById('bw-props-corner-kx-c-lb'),
+        bwPropsCornerRigidLb: document.getElementById('bw-props-corner-rigid-lb'),
+        bwPropsJointPresetLb: document.getElementById('bw-props-joint-preset-lb'),
+        bwPropsCornerKxTLt: document.getElementById('bw-props-corner-kx-t-lt'),
+        bwPropsCornerKxCLt: document.getElementById('bw-props-corner-kx-c-lt'),
+        bwPropsCornerRigidLt: document.getElementById('bw-props-corner-rigid-lt'),
+        bwPropsJointPresetLt: document.getElementById('bw-props-joint-preset-lt'),
+        bwPropsCornerKxTRb: document.getElementById('bw-props-corner-kx-t-rb'),
+        bwPropsCornerKxCRb: document.getElementById('bw-props-corner-kx-c-rb'),
+        bwPropsCornerRigidRb: document.getElementById('bw-props-corner-rigid-rb'),
+        bwPropsJointPresetRb: document.getElementById('bw-props-joint-preset-rb'),
+        bwPropsCornerKxTRt: document.getElementById('bw-props-corner-kx-t-rt'),
+        bwPropsCornerKxCRt: document.getElementById('bw-props-corner-kx-c-rt'),
+        bwPropsCornerRigidRt: document.getElementById('bw-props-corner-rigid-rt'),
+        bwPropsJointPresetRt: document.getElementById('bw-props-joint-preset-rt'),
+        bwPropsCornerAllowTLb: document.getElementById('bw-props-corner-allow-t-lb'),
+        bwPropsCornerAllowCLb: document.getElementById('bw-props-corner-allow-c-lb'),
+        bwPropsCornerAllowTLt: document.getElementById('bw-props-corner-allow-t-lt'),
+        bwPropsCornerAllowCLt: document.getElementById('bw-props-corner-allow-c-lt'),
+        bwPropsCornerAllowTRb: document.getElementById('bw-props-corner-allow-t-rb'),
+        bwPropsCornerAllowCRb: document.getElementById('bw-props-corner-allow-c-rb'),
+        bwPropsCornerAllowTRt: document.getElementById('bw-props-corner-allow-t-rt'),
+        bwPropsCornerAllowCRt: document.getElementById('bw-props-corner-allow-c-rt'),
         gridToggle: document.getElementById('grid-toggle'),
         memberInfoToggle: document.getElementById('member-info-toggle'),
         gridSpacing: document.getElementById('grid-spacing'),
@@ -4313,7 +4388,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- State and History Management ---
     const getCurrentState = () => {
-        const state = { nodes: [], members: [], nodeLoads: [], memberLoads: [] };
+        const state = { nodes: [], members: [], springElements: [], nodeLoads: [], memberLoads: [], shearWalls: [], braceWalls: [] };
         Array.from(elements.nodesTable.rows).forEach(row => {
             const supportSelectValue = row.cells[4]?.querySelector('select')?.value || 'free';
             state.nodes.push({
@@ -4344,13 +4419,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
-            const izValue = row.cells[5]?.querySelector('input')?.value || 1840;
-            const iyValue = row.cells[6]?.querySelector('input')?.value || 613;
-            const jValue = row.cells[7]?.querySelector('input')?.value ?? '';
-            const iwValue = row.cells[8]?.querySelector('input')?.value || '';
-            const aValue = row.cells[9]?.querySelector('input')?.value || 2340;
-            const zzValue = row.cells[10]?.querySelector('input')?.value || 1230;
-            const zyValue = row.cells[11]?.querySelector('input')?.value || 410;
+            const izValue = row.cells[5]?.querySelector('.section-Iz-input')?.value ?? row.cells[5]?.querySelector('input')?.value ?? 1840;
+            const iyValue = row.cells[6]?.querySelector('.section-Iy-input')?.value ?? row.cells[6]?.querySelector('input')?.value ?? 613;
+            const jValue = row.cells[7]?.querySelector('.section-J-input')?.value ?? row.cells[7]?.querySelector('input')?.value ?? '';
+            const iwValue = row.cells[8]?.querySelector('.section-Iw-input')?.value ?? row.cells[8]?.querySelector('input')?.value ?? '';
+            const aValue = row.cells[9]?.querySelector('.section-A-input')?.value ?? row.cells[9]?.querySelector('input')?.value ?? 2340;
+            const zzValue = row.cells[10]?.querySelector('.section-Zz-input')?.value ?? row.cells[10]?.querySelector('input')?.value ?? 1230;
+            const zyValue = row.cells[11]?.querySelector('.section-Zy-input')?.value ?? row.cells[11]?.querySelector('input')?.value ?? 410;
+
+            const izFactor = row.cells[5]?.querySelector('.section-Iz-factor')?.value ?? '1.0';
+            const iyFactor = row.cells[6]?.querySelector('.section-Iy-factor')?.value ?? '1.0';
+            const jFactor = row.cells[7]?.querySelector('.section-J-factor')?.value ?? '1.0';
+            const iwFactor = row.cells[8]?.querySelector('.section-Iw-factor')?.value ?? '1.0';
+            const aFactor = row.cells[9]?.querySelector('.section-A-factor')?.value ?? '1.0';
+            const zzFactor = row.cells[10]?.querySelector('.section-Zz-factor')?.value ?? '1.0';
+            const zyFactor = row.cells[11]?.querySelector('.section-Zy-factor')?.value ?? '1.0';
 
             const bucklingKValue = (row.querySelector('.buckling-k-input') ? row.querySelector('.buckling-k-input').value : '');
 
@@ -4367,6 +4450,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 A: aValue,
                 Zz: zzValue,
                 Zy: zyValue,
+                Iz_factor: izFactor,
+                Iy_factor: iyFactor,
+                J_factor: jFactor,
+                Iw_factor: iwFactor,
+                A_factor: aFactor,
+                Zz_factor: zzFactor,
+                Zy_factor: zyFactor,
                 bucklingK: bucklingKValue,
                 I: izValue,
                 Z: zzValue
@@ -4473,13 +4563,219 @@ document.addEventListener('DOMContentLoaded', () => {
                 w: row.cells[2]?.querySelector('input')?.value || 0
             });
         });
+
+        // バネ要素（節点間）
+        try {
+            if (elements.springElementsTable) {
+                const readCell = (cell) => {
+                    const numEl = cell?.querySelector('input[type="number"]');
+                    const chkEl = cell?.querySelector('input[type="checkbox"]');
+                    const v = parseFloat(numEl?.value);
+                    return {
+                        value: Number.isFinite(v) ? v : 0,
+                        rigid: !!chkEl?.checked
+                    };
+                };
+                Array.from(elements.springElementsTable.rows).forEach(row => {
+                    const iVal = row.cells[1]?.querySelector('input')?.value || 1;
+                    const jVal = row.cells[2]?.querySelector('input')?.value || 2;
+                    const kxT = readCell(row.cells[3]);
+                    const kxC = readCell(row.cells[4]);
+                    const ky = readCell(row.cells[5]);
+                    state.springElements.push({
+                        i: iVal,
+                        j: jVal,
+                        KxT: kxT.value,
+                        rigidT: kxT.rigid,
+                        KxC: kxC.value,
+                        rigidC: kxC.rigid,
+                        Ky: ky.value,
+                        rigidKy: ky.rigid,
+                        shearWallId: row?.dataset?.shearWallId || '',
+                        shearWallRole: row?.dataset?.shearWallRole || '',
+                        braceWallId: row?.dataset?.braceWallId || '',
+                        braceWallRole: row?.dataset?.braceWallRole || ''
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn('getCurrentState: spring-elements-table read failed', e);
+        }
+
+        // 耐力壁（ブレース置換）
+        try {
+            if (elements.braceWallsTable) {
+                const toNum = (v) => {
+                    const n = parseFloat(v);
+                    return Number.isFinite(n) ? n : 0;
+                };
+                Array.from(elements.braceWallsTable.rows).forEach((row) => {
+                    const braceWallId = row?.dataset?.braceWallId || '';
+                    if (!braceWallId) return;
+                    const nodeInputs = Array.from(row.querySelectorAll('input.bracewall-node'));
+                    const kindSel = row.querySelector('select.bracewall-kind');
+
+                    state.braceWalls.push({
+                        braceWallId,
+                        enabled: !!row.querySelector('.bracewall-enabled')?.checked,
+                        lb: nodeInputs[0]?.value || '',
+                        lt: nodeInputs[1]?.value || '',
+                        rb: nodeInputs[2]?.value || '',
+                        rt: nodeInputs[3]?.value || '',
+                        perMeter: !!row.querySelector('.bracewall-per-meter')?.checked,
+                        kShear: row.querySelector('.bracewall-k-shear')?.value || '',
+                        qAllowShort: row.querySelector('.bracewall-q-allow-short')?.value || '',
+                        kind: kindSel ? (kindSel.value || '') : (row.dataset.braceWallKind || ''),
+                        sideColumnsEnabled: !!row.querySelector('.bracewall-sidecolumns-enabled')?.checked,
+                        wallPresetId: row.dataset.wallPresetId || '',
+                        wallPresetName: row.dataset.wallPresetName || '',
+                        offsetBottomMm: row.dataset.bracewallOffsetBottomMm || '',
+                        offsetTopMm: row.dataset.bracewallOffsetTopMm || '',
+                        jointPresetLb: row.dataset.bracewallJointPresetLb || '',
+                        jointPresetLt: row.dataset.bracewallJointPresetLt || '',
+                        jointPresetRb: row.dataset.bracewallJointPresetRb || '',
+                        jointPresetRt: row.dataset.bracewallJointPresetRt || '',
+                        cornerKxTLb: row.dataset.bracewallCornerKxTLb || '',
+                        cornerKxCLb: row.dataset.bracewallCornerKxCLb || '',
+                        cornerRigidLb: row.dataset.bracewallCornerRigidLb || '',
+                        cornerKxTLt: row.dataset.bracewallCornerKxTLt || '',
+                        cornerKxCLt: row.dataset.bracewallCornerKxCLt || '',
+                        cornerRigidLt: row.dataset.bracewallCornerRigidLt || '',
+                        cornerKxTRb: row.dataset.bracewallCornerKxTRb || '',
+                        cornerKxCRb: row.dataset.bracewallCornerKxCRb || '',
+                        cornerRigidRb: row.dataset.bracewallCornerRigidRb || '',
+                        cornerKxTRt: row.dataset.bracewallCornerKxTRt || '',
+                        cornerKxCRt: row.dataset.bracewallCornerKxCRt || '',
+                        cornerRigidRt: row.dataset.bracewallCornerRigidRt || '',
+                        cornerAllowTLb: row.dataset.bracewallCornerAllowTLb || '',
+                        cornerAllowCLb: row.dataset.bracewallCornerAllowCLb || '',
+                        cornerAllowTLt: row.dataset.bracewallCornerAllowTLt || '',
+                        cornerAllowCLt: row.dataset.bracewallCornerAllowCLt || '',
+                        cornerAllowTRb: row.dataset.bracewallCornerAllowTRb || '',
+                        cornerAllowCRb: row.dataset.bracewallCornerAllowCRb || '',
+                        cornerAllowTRt: row.dataset.bracewallCornerAllowTRt || '',
+                        cornerAllowCRt: row.dataset.bracewallCornerAllowCRt || ''
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn('getCurrentState: brace-walls-table read failed', e);
+        }
         return state;
+    };
+
+    // --- Reduction factor display helpers (3D) ---
+    const updateReductionDisplayForWrapper = (wrapper) => {
+        if (!wrapper) return;
+        const baseInput = wrapper.querySelector('.reduction-base-input');
+        const factorInput = wrapper.querySelector('.reduction-factor-input');
+        const label = wrapper.querySelector('.reduced-label');
+        const valueSpan = wrapper.querySelector('.reduced-value');
+
+        if (!baseInput || !factorInput || !label || !valueSpan) return;
+
+        const base = parseFloat(baseInput.value);
+        const factorRaw = parseFloat(factorInput.value);
+        const factor = Number.isFinite(factorRaw) ? factorRaw : 1.0;
+        const decimals = (() => {
+            const d = parseInt(wrapper.getAttribute('data-reduction-decimals') || '2', 10);
+            return Number.isFinite(d) ? d : 2;
+        })();
+
+        if (!Number.isFinite(base)) {
+            label.style.display = 'none';
+            valueSpan.textContent = '';
+            return;
+        }
+
+        const reduced = base * factor;
+        const show = Math.abs(factor - 1.0) > 1e-9;
+        if (!show) {
+            label.style.display = 'none';
+            valueSpan.textContent = '';
+            return;
+        }
+
+        label.style.display = '';
+        valueSpan.textContent = Number.isFinite(reduced) ? reduced.toFixed(decimals) : '';
+    };
+
+    const updateReductionDisplays = (root = document) => {
+        try {
+            root.querySelectorAll('.reduction-wrapper').forEach(updateReductionDisplayForWrapper);
+        } catch (_) {}
     };
 
     const pushState = () => { historyStack.push(getCurrentState()); };
 
+    // 部材表：低減係数の表示更新
+    try {
+        elements.membersTable?.addEventListener('input', (e) => {
+            const target = e?.target;
+            if (!target || !(target instanceof HTMLElement)) return;
+            if (target.classList.contains('reduction-base-input') || target.classList.contains('reduction-factor-input')) {
+                updateReductionDisplayForWrapper(target.closest('.reduction-wrapper'));
+            }
+        });
+    } catch (_) {}
+
     const restoreState = (state) => {
         if (!state) return;
+
+        // #META に保存された主要設定を復元（存在しない場合は現状維持）
+        try {
+            const meta = (state && state.meta && typeof state.meta === 'object') ? state.meta : null;
+            const getMetaValue = (key) => {
+                if (!meta) return null;
+                const target = String(key || '').toLowerCase();
+                for (const [k, v] of Object.entries(meta)) {
+                    if (String(k).toLowerCase() === target) return v;
+                }
+                return null;
+            };
+            const parseBool = (v) => {
+                const s = (v === undefined || v === null) ? '' : String(v).trim().toLowerCase();
+                return (s === '1' || s === 'true' || s === 'yes' || s === 'on');
+            };
+
+            const considerSelfWeightVal = getMetaValue('considerSelfWeight');
+            const considerSelfWeightEl = document.getElementById('consider-self-weight-checkbox');
+            if (considerSelfWeightVal !== null && considerSelfWeightEl) {
+                considerSelfWeightEl.checked = parseBool(considerSelfWeightVal);
+            }
+
+            const showSpringStiffnessVal = getMetaValue('showSpringStiffness');
+            const showSpringStiffnessEl = document.getElementById('show-spring-stiffness');
+            if (showSpringStiffnessVal !== null && showSpringStiffnessEl) {
+                showSpringStiffnessEl.checked = parseBool(showSpringStiffnessVal);
+            }
+
+            const showBraceNamesVal = getMetaValue('showBraceNames');
+            const showBraceNamesEl = document.getElementById('show-brace-names');
+            if (showBraceNamesVal !== null && showBraceNamesEl) {
+                showBraceNamesEl.checked = parseBool(showBraceNamesVal);
+            }
+
+            const showMemberDimensionsVal = getMetaValue('showMemberDimensions');
+            const showMemberDimensionsEl = document.getElementById('show-member-dimensions');
+            if (showMemberDimensionsVal !== null && showMemberDimensionsEl) {
+                showMemberDimensionsEl.checked = parseBool(showMemberDimensionsVal);
+            }
+
+            const showExternalLoadsVal = getMetaValue('showExternalLoads');
+            const showExternalLoadsEl = document.getElementById('show-external-loads');
+            if (showExternalLoadsVal !== null && showExternalLoadsEl) {
+                showExternalLoadsEl.checked = parseBool(showExternalLoadsVal);
+            }
+
+            const showSelfWeightVal = getMetaValue('showSelfWeight');
+            const showSelfWeightEl = document.getElementById('show-self-weight');
+            if (showSelfWeightVal !== null && showSelfWeightEl) {
+                showSelfWeightEl.checked = parseBool(showSelfWeightVal);
+            }
+        } catch (e) {
+            console.warn('restoreState: meta apply failed', e);
+        }
         
         const safeDecode = (value) => {
             if (typeof value !== 'string' || value.length === 0) return value || '';
@@ -4545,6 +4841,7 @@ document.addEventListener('DOMContentLoaded', () => {
             Iz: 1840,
             Iy: 613,
             J: null,
+            Iw: null,
             A: 2340,
             Zz: 1230,
             Zy: 410
@@ -4555,6 +4852,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             elements.nodesTable.innerHTML = '';
             elements.membersTable.innerHTML = '';
+            if (elements.springElementsTable) elements.springElementsTable.innerHTML = '';
             elements.nodeLoadsTable.innerHTML = '';
             elements.memberLoadsTable.innerHTML = '';
             
@@ -4579,6 +4877,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const iz_cm4 = pickMemberValue(m, ['Iz', 'iz', 'I'], MEMBER_PROPERTY_DEFAULTS.Iz);
                     const iy_cm4 = pickMemberValue(m, ['Iy', 'iy'], MEMBER_PROPERTY_DEFAULTS.Iy);
                     const j_cm4 = pickMemberValue(m, ['J', 'j'], null);
+                    const iw_cm6 = pickMemberValue(m, ['Iw', 'iw'], MEMBER_PROPERTY_DEFAULTS.Iw);
                     const a_cm2 = pickMemberValue(m, ['A', 'a'], MEMBER_PROPERTY_DEFAULTS.A);
                     const zz_cm3 = pickMemberValue(m, ['Zz', 'Z', 'zz'], MEMBER_PROPERTY_DEFAULTS.Zz);
                     const zy_cm3 = pickMemberValue(m, ['Zy', 'zy'], MEMBER_PROPERTY_DEFAULTS.Zy);
@@ -4591,19 +4890,34 @@ document.addEventListener('DOMContentLoaded', () => {
                     const Iy_m4 = getPositiveNumberValue(iy_cm4, MEMBER_PROPERTY_DEFAULTS.Iy) * 1e-8;
                     const J_cm4 = getPositiveNumberValue(j_cm4, null);
                     const J_m4 = (J_cm4 !== null) ? (J_cm4 * 1e-8) : '';
+                    const Iw_cm6 = getPositiveNumberValue(iw_cm6, null);
+                    const Iw_m6 = (Iw_cm6 !== null) ? (Iw_cm6 * 1e-12) : '';
                     const A_m2 = getPositiveNumberValue(a_cm2, MEMBER_PROPERTY_DEFAULTS.A) * 1e-4;
                     const Zz_m3 = getPositiveNumberValue(zz_cm3, MEMBER_PROPERTY_DEFAULTS.Zz) * 1e-6;
                     const Zy_m3 = getPositiveNumberValue(zy_cm3, MEMBER_PROPERTY_DEFAULTS.Zy) * 1e-6;
+
+                    const factorOrDefault = (v) => {
+                        const n = asFiniteNumber(v);
+                        return (n !== null) ? n : 1.0;
+                    };
+                    const Iz_factor = factorOrDefault(m?.Iz_factor ?? m?.iz_factor);
+                    const Iy_factor = factorOrDefault(m?.Iy_factor ?? m?.iy_factor);
+                    const J_factor = factorOrDefault(m?.J_factor ?? m?.j_factor);
+                    const Iw_factor = factorOrDefault(m?.Iw_factor ?? m?.iw_factor);
+                    const A_factor = factorOrDefault(m?.A_factor ?? m?.a_factor);
+                    const Zz_factor = factorOrDefault(m?.Zz_factor ?? m?.zz_factor);
+                    const Zy_factor = factorOrDefault(m?.Zy_factor ?? m?.zy_factor);
                     
                     // memberRowHTML の戻り値を安全に取得
                     const memberHTML = memberRowHTML(
                         memberI,
                         memberJ,
                         m.E || '205000',
-                        '235',
+                        (m.strengthValue || '235'),
                         Iz_m4,
                         Iy_m4,
                         J_m4,
+                        Iw_m6,
                         A_m2,
                         Zz_m3,
                         Zy_m3,
@@ -4777,11 +5091,183 @@ document.addEventListener('DOMContentLoaded', () => {
                             // 念のため既存のデータセットをクリア
                             applySectionAxisDataset(newRow, null);
                         }
+
+                        // 低減係数の復元（欠損は1.0）
+                        try {
+                            const setFactor = (cellIndex, className, value) => {
+                                const el = newRow.cells[cellIndex]?.querySelector(className);
+                                if (el) el.value = String(value);
+                            };
+                            setFactor(5, '.section-Iz-factor', Iz_factor);
+                            setFactor(6, '.section-Iy-factor', Iy_factor);
+                            setFactor(7, '.section-J-factor', J_factor);
+                            setFactor(8, '.section-Iw-factor', Iw_factor);
+                            setFactor(9, '.section-A-factor', A_factor);
+                            setFactor(10, '.section-Zz-factor', Zz_factor);
+                            setFactor(11, '.section-Zy-factor', Zy_factor);
+                            updateReductionDisplays(newRow);
+                        } catch (e) {
+                            console.warn('restoreState: reduction factor restore failed', e);
+                        }
                     }
                 } catch (memberError) {
                     console.error('Error restoring member:', memberError, m);
                 }
             });
+
+            // バネ要素（節点間）復元
+            try {
+                if (elements.springElementsTable && Array.isArray(state.springElements) && state.springElements.length > 0) {
+                    state.springElements.forEach(se => {
+                        const parseBoolLoose = (v) => {
+                            if (typeof v === 'boolean') return v;
+                            const s = (v === undefined || v === null) ? '' : String(v).trim().toLowerCase();
+                            return (s === '1' || s === 'true' || s === 'yes' || s === 'on');
+                        };
+
+                        const kxT = getNumberValue(se.KxT ?? se.kxT ?? se.kxt ?? se.kx_tension, 0);
+                        const kxC = getNumberValue(se.KxC ?? se.kxC ?? se.kxc ?? se.kx_compression, 0);
+                        const ky = getNumberValue(se.Ky ?? se.ky, 0);
+                        const rigidT = parseBoolLoose(se.rigidT ?? se.rigidKxT ?? se.rigid_kx_tension);
+                        const rigidC = parseBoolLoose(se.rigidC ?? se.rigidKxC ?? se.rigid_kx_compression);
+                        const rigidKy = parseBoolLoose(se.rigidKy ?? se.rigid_ky);
+
+                        const newRow = addRow(elements.springElementsTable, [
+                            '#',
+                            `<input type="number" value="${getNumberValue(se.i, 1)}" min="1" step="1">`,
+                            `<input type="number" value="${getNumberValue(se.j, 2)}" min="1" step="1">`,
+                            `<div style="display:flex; align-items:center; gap:8px;">
+                                <input type="number" value="${kxT}" step="0.01" style="flex:1; min-width:0;">
+                                <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                                    <input type="checkbox" ${rigidT ? 'checked' : ''}>剛
+                                </label>
+                            </div>`,
+                            `<div style="display:flex; align-items:center; gap:8px;">
+                                <input type="number" value="${kxC}" step="0.01" style="flex:1; min-width:0;">
+                                <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                                    <input type="checkbox" ${rigidC ? 'checked' : ''}>剛
+                                </label>
+                            </div>`,
+                            `<div style="display:flex; align-items:center; gap:8px;">
+                                <input type="number" value="${ky}" step="0.01" style="flex:1; min-width:0;">
+                                <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                                    <input type="checkbox" ${rigidKy ? 'checked' : ''}>剛
+                                </label>
+                            </div>`
+                        ], false);
+
+                        if (newRow) {
+                            if (se.shearWallId) newRow.dataset.shearWallId = String(se.shearWallId);
+                            if (se.shearWallRole) newRow.dataset.shearWallRole = String(se.shearWallRole);
+                            if (se.braceWallId) newRow.dataset.braceWallId = String(se.braceWallId);
+                            if (se.braceWallRole) newRow.dataset.braceWallRole = String(se.braceWallRole);
+                        }
+                    });
+                }
+            } catch (e) {
+                console.warn('restoreState: spring-elements-table restore failed', e);
+            }
+
+            // 耐力壁（ブレース置換）復元 → 復元後に silent apply で生成バネを再構築
+            try {
+                if (elements.braceWallsTable) {
+                    elements.braceWallsTable.innerHTML = '';
+                }
+                const api = window.__shearWalls;
+                if (api && typeof api.addBraceWallRow === 'function' && Array.isArray(state.braceWalls) && state.braceWalls.length > 0) {
+                    let maxIdNum = 0;
+                    const toStr = (v) => (v === undefined || v === null) ? '' : String(v);
+                    const setRowInput = (row, sel, v) => {
+                        const el = row.querySelector(sel);
+                        if (!el) return;
+                        el.value = toStr(v);
+                        try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+                        try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+                    };
+                    const setRowChecked = (row, sel, checked) => {
+                        const el = row.querySelector(sel);
+                        if (!el) return;
+                        el.checked = !!checked;
+                        try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+                    };
+
+                    state.braceWalls.forEach((bw) => {
+                        const braceWallId = toStr(bw.braceWallId || bw.id || bw.BraceWallId || '');
+                        if (!braceWallId) return;
+                        const kind = toStr(bw.kind || bw.braceWallKind || bw.Kind || 'tension') || 'tension';
+
+                        const n = parseInt(braceWallId.replace(/^BW/i, ''), 10);
+                        if (Number.isFinite(n)) maxIdNum = Math.max(maxIdNum, n);
+
+                        const row = api.addBraceWallRow({ isInitial: true, kind, braceWallId });
+                        if (!row) return;
+
+                        setRowChecked(row, '.bracewall-enabled', (bw.enabled === true || bw.enabled === '1' || bw.enabled === 'true'));
+                        const nodeEls = Array.from(row.querySelectorAll('input.bracewall-node'));
+                        const nodeVals = [bw.lb, bw.lt, bw.rb, bw.rt].map(toStr);
+                        for (let i = 0; i < 4 && i < nodeEls.length; i++) {
+                            nodeEls[i].value = nodeVals[i];
+                            try { nodeEls[i].dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+                            try { nodeEls[i].dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+                        }
+
+                        setRowChecked(row, '.bracewall-per-meter', (bw.perMeter === true || bw.perMeter === '1' || bw.perMeter === 'true'));
+                        setRowInput(row, '.bracewall-k-shear', bw.kShear);
+                        setRowInput(row, '.bracewall-q-allow-short', bw.qAllowShort);
+                        setRowInput(row, '.bracewall-kind', kind);
+                        setRowChecked(row, '.bracewall-sidecolumns-enabled', (bw.sideColumnsEnabled === true || bw.sideColumnsEnabled === '1' || bw.sideColumnsEnabled === 'true'));
+
+                        try {
+                            row.dataset.wallPresetId = toStr(bw.wallPresetId);
+                            row.dataset.wallPresetName = toStr(bw.wallPresetName);
+                            row.dataset.bracewallOffsetBottomMm = toStr(bw.offsetBottomMm);
+                            row.dataset.bracewallOffsetTopMm = toStr(bw.offsetTopMm);
+                            row.dataset.bracewallJointPresetLb = toStr(bw.jointPresetLb);
+                            row.dataset.bracewallJointPresetLt = toStr(bw.jointPresetLt);
+                            row.dataset.bracewallJointPresetRb = toStr(bw.jointPresetRb);
+                            row.dataset.bracewallJointPresetRt = toStr(bw.jointPresetRt);
+                            row.dataset.bracewallCornerKxTLb = toStr(bw.cornerKxTLb);
+                            row.dataset.bracewallCornerKxCLb = toStr(bw.cornerKxCLb);
+                            row.dataset.bracewallCornerRigidLb = toStr(bw.cornerRigidLb);
+                            row.dataset.bracewallCornerKxTLt = toStr(bw.cornerKxTLt);
+                            row.dataset.bracewallCornerKxCLt = toStr(bw.cornerKxCLt);
+                            row.dataset.bracewallCornerRigidLt = toStr(bw.cornerRigidLt);
+                            row.dataset.bracewallCornerKxTRb = toStr(bw.cornerKxTRb);
+                            row.dataset.bracewallCornerKxCRb = toStr(bw.cornerKxCRb);
+                            row.dataset.bracewallCornerRigidRb = toStr(bw.cornerRigidRb);
+                            row.dataset.bracewallCornerKxTRt = toStr(bw.cornerKxTRt);
+                            row.dataset.bracewallCornerKxCRt = toStr(bw.cornerKxCRt);
+                            row.dataset.bracewallCornerRigidRt = toStr(bw.cornerRigidRt);
+                            row.dataset.bracewallCornerAllowTLb = toStr(bw.cornerAllowTLb);
+                            row.dataset.bracewallCornerAllowCLb = toStr(bw.cornerAllowCLb);
+                            row.dataset.bracewallCornerAllowTLt = toStr(bw.cornerAllowTLt);
+                            row.dataset.bracewallCornerAllowCLt = toStr(bw.cornerAllowCLt);
+                            row.dataset.bracewallCornerAllowTRb = toStr(bw.cornerAllowTRb);
+                            row.dataset.bracewallCornerAllowCRb = toStr(bw.cornerAllowCRb);
+                            row.dataset.bracewallCornerAllowTRt = toStr(bw.cornerAllowTRt);
+                            row.dataset.bracewallCornerAllowCRt = toStr(bw.cornerAllowCRt);
+                        } catch (_) {}
+
+                        // row内wall preset selectがあれば反映
+                        try {
+                            const sel = row.querySelector('select.bracewall-walllib-select');
+                            if (sel && row.dataset.wallPresetId) sel.value = row.dataset.wallPresetId;
+                        } catch (_) {}
+                    });
+
+                    try {
+                        if (typeof api.__setNextBraceWallId === 'function') api.__setNextBraceWallId(maxIdNum + 1);
+                    } catch (_) {}
+
+                    try {
+                        if (typeof api.applyBraceWallsToModel === 'function') api.applyBraceWallsToModel({ silent: true });
+                    } catch (e) {
+                        console.warn('restoreState: brace walls silent apply failed', e);
+                    }
+                }
+            } catch (e) {
+                console.warn('restoreState: brace-walls-table restore failed', e);
+            }
             
             // 節点荷重復元
             state.nodeLoads.forEach(l => addRow(elements.nodeLoadsTable, [
@@ -5233,6 +5719,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const renumberTables = () => {
         elements.nodesTable.querySelectorAll('tr').forEach((row, i) => row.cells[0].textContent = i + 1);
         elements.membersTable.querySelectorAll('tr').forEach((row, i) => row.cells[0].textContent = i + 1);
+        if (elements.springElementsTable) {
+            elements.springElementsTable.querySelectorAll('tr').forEach((row, i) => row.cells[0].textContent = i + 1);
+        }
     };
     
     const calculate = () => {
@@ -5666,6 +6155,140 @@ document.addEventListener('DOMContentLoaded', () => {
             // 🔧 3D構造の場合、各部材に3D用の変換マトリックスと剛性マトリックスを設定
             if (!is2DFrame) {
                 members.forEach((member, idx) => {
+                    if (member && member.memberType === 'spring-element') {
+                        const ni = nodes[member.i];
+                        const nj = nodes[member.j];
+                        const dx = nj.x - ni.x;
+                        const dy = nj.y - ni.y;
+                        const dz = nj.z - ni.z;
+                        const L = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                        if (!(L > 0)) {
+                            throw new Error(`バネ要素 ${idx+1} の長さが0です`);
+                        }
+
+                        const cx = dx / L;
+                        const cy = dy / L;
+                        const cz = dz / L;
+
+                        let v_y, v_z;
+                        if (Math.abs(cz) < 0.9) {
+                            const temp = Math.sqrt(cx*cx + cy*cy);
+                            v_z = { x: -cz*cx/temp, y: -cz*cy/temp, z: temp };
+                            const len_vz = Math.sqrt(v_z.x*v_z.x + v_z.y*v_z.y + v_z.z*v_z.z);
+                            v_z = { x: v_z.x/len_vz, y: v_z.y/len_vz, z: v_z.z/len_vz };
+                            v_y = {
+                                x: v_z.y*cz - v_z.z*cy,
+                                y: v_z.z*cx - v_z.x*cz,
+                                z: v_z.x*cy - v_z.y*cx
+                            };
+                        } else {
+                            v_y = { x: 0, y: 1, z: 0 };
+                            v_z = {
+                                x: cy*0 - cz*1,
+                                y: cz*0 - cx*0,
+                                z: cx*1 - cy*0
+                            };
+                            const len_vz = Math.sqrt(v_z.x*v_z.x + v_z.y*v_z.y + v_z.z*v_z.z);
+                            if (len_vz > 1e-6) {
+                                v_z = { x: v_z.x/len_vz, y: v_z.y/len_vz, z: v_z.z/len_vz };
+                            }
+                        }
+
+                        const R = [
+                            [cx, cy, cz, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                            [v_y.x, v_y.y, v_y.z, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                            [v_z.x, v_z.y, v_z.z, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                            [0, 0, 0, cx, cy, cz, 0, 0, 0, 0, 0, 0],
+                            [0, 0, 0, v_y.x, v_y.y, v_y.z, 0, 0, 0, 0, 0, 0],
+                            [0, 0, 0, v_z.x, v_z.y, v_z.z, 0, 0, 0, 0, 0, 0],
+                            [0, 0, 0, 0, 0, 0, cx, cy, cz, 0, 0, 0],
+                            [0, 0, 0, 0, 0, 0, v_y.x, v_y.y, v_y.z, 0, 0, 0],
+                            [0, 0, 0, 0, 0, 0, v_z.x, v_z.y, v_z.z, 0, 0, 0],
+                            [0, 0, 0, 0, 0, 0, 0, 0, 0, cx, cy, cz],
+                            [0, 0, 0, 0, 0, 0, 0, 0, 0, v_y.x, v_y.y, v_y.z],
+                            [0, 0, 0, 0, 0, 0, 0, 0, 0, v_z.x, v_z.y, v_z.z]
+                        ];
+
+                        member.T3D = R;
+                        member.length = L;
+
+                        const se = member.springElement || {};
+                        const parseBoolLoose = (v) => {
+                            if (typeof v === 'boolean') return v;
+                            const s = (v === undefined || v === null) ? '' : String(v).trim().toLowerCase();
+                            return (s === '1' || s === 'true' || s === 'yes' || s === 'on');
+                        };
+                        const KxT = Number(se.Kx_tension) || 0;
+                        const KxC = Number(se.Kx_compression) || 0;
+                        const Ky = Number(se.Ky) || 0;
+                        const rigidT = parseBoolLoose(se.rigidKx_tension ?? se.rigidKxT);
+                        const rigidC = parseBoolLoose(se.rigidKx_compression ?? se.rigidKxC);
+                        const rigidKy = parseBoolLoose(se.rigidKy);
+
+                        const SPRING_ELEMENT_TABLE_ROW_OFFSET = 1000000;
+                        const springRowIndex = (member.tableRowIndex !== undefined && member.tableRowIndex !== null)
+                            ? (Number(member.tableRowIndex) - SPRING_ELEMENT_TABLE_ROW_OFFSET)
+                            : idx;
+                        const tableRowIndex = SPRING_ELEMENT_TABLE_ROW_OFFSET + (Number.isFinite(springRowIndex) ? springRowIndex : idx);
+
+                        let axialSign = 1;
+                        try {
+                            const map = window.__springAxialSignByMemberRowIndex;
+                            if (map && (tableRowIndex in map)) {
+                                axialSign = (map[tableRowIndex] === -1) ? -1 : 1;
+                            }
+                        } catch (_) {}
+
+                        const EPS_SPRING = 1e-9;
+                        const RIGID_KN_PER_M = 1e9;
+                        let KxEff = (axialSign < 0)
+                            ? (rigidC ? RIGID_KN_PER_M : (KxC || 0))
+                            : (rigidT ? RIGID_KN_PER_M : (KxT || 0));
+                        let KyEff = rigidKy ? RIGID_KN_PER_M : (Ky || 0);
+                        if ((KxEff === 0 || KxEff === null) && (KyEff === 0 || KyEff === null)) {
+                            KxEff = EPS_SPRING;
+                            KyEff = EPS_SPRING;
+                        }
+
+                        const k_local_3d = Array.from({ length: 12 }, () => Array(12).fill(0));
+                        const add2 = (a, b, k) => {
+                            k_local_3d[a][a] += k;
+                            k_local_3d[a][b] -= k;
+                            k_local_3d[b][a] -= k;
+                            k_local_3d[b][b] += k;
+                        };
+                        // 軸方向 + せん断（local y,z に同じKy）
+                        add2(0, 6, KxEff);
+                        add2(1, 7, KyEff);
+                        add2(2, 8, KyEff);
+
+                        const globalIndexMap = [
+                            member.i * 6,
+                            member.i * 6 + 1,
+                            member.i * 6 + 2,
+                            member.i * 6 + 3,
+                            member.i * 6 + 4,
+                            member.i * 6 + 5,
+                            member.j * 6,
+                            member.j * 6 + 1,
+                            member.j * 6 + 2,
+                            member.j * 6 + 3,
+                            member.j * 6 + 4,
+                            member.j * 6 + 5
+                        ];
+
+                        const releaseData = build3DReleaseData(k_local_3d, R, globalIndexMap, member.i_conn, member.j_conn, mat);
+
+                        member.k_local_3d = k_local_3d;
+                        member.k_local_active = releaseData.k_local_active;
+                        member.T_active = releaseData.T_active;
+                        member.activeLocalIndices = releaseData.activeLocalIndices;
+                        member.releaseLocalIndices = releaseData.releaseLocalIndices;
+                        member.release3D = releaseData;
+                        member.globalIndexMap = globalIndexMap;
+                        return;
+                    }
+
                     const ni = nodes[member.i];
                     const nj = nodes[member.j];
                     const dx = nj.x - ni.x;
@@ -5762,26 +6385,62 @@ document.addEventListener('DOMContentLoaded', () => {
                     const spring_j_3d = normalizeSpringFor3D(member.spring_j);
 
                     // 2D(EB)の端部バネ合成を用いて、3Dの局所剛性(12x12)を組み立てる。
-                    const k2d_z = compute2DLocalStiffnessWithEndSpringsEB({
-                        E,
-                        A,
-                        I: Iz,
-                        L,
-                        i_conn: iConnForSprings,
-                        j_conn: jConnForSprings,
-                        spring_i: spring_i_3d,
-                        spring_j: spring_j_3d
-                    });
-                    const k2d_y = compute2DLocalStiffnessWithEndSpringsEB({
-                        E,
-                        A,
-                        I: Iy,
-                        L,
-                        i_conn: iConnForSprings,
-                        j_conn: jConnForSprings,
-                        spring_i: spring_i_3d,
-                        spring_j: spring_j_3d
-                    });
+                    // ただし耐力壁置換柱など、data-shear-k-override がある部材は該当平面のみTimoshenko(せん断柔度あり)で扱う。
+                    const shearKOverride = member.shearKOverride_kN_per_m;
+                    const shearKOverrideRigid = member.shearKOverrideRigid;
+                    const shearAxisRaw = (member.shearKOverrideAxis || '').toString().trim().toLowerCase();
+                    const hasShearOverride = (shearKOverrideRigid === true) || (Number.isFinite(Number(shearKOverride)) && Number(shearKOverride) > 0);
+                    const shearAxis = (shearAxisRaw === 'y' || shearAxisRaw === 'z' || shearAxisRaw === 'both') ? shearAxisRaw : null;
+                    const applyOnLocalY = !shearAxis || shearAxis === 'y' || shearAxis === 'both';
+                    const applyOnLocalZ = !shearAxis || shearAxis === 'z' || shearAxis === 'both';
+
+                    const k2d_z = (hasShearOverride && applyOnLocalY)
+                        ? compute2DLocalStiffnessWithEndSprings({
+                            E,
+                            A,
+                            I: Iz,
+                            L,
+                            i_conn: iConnForSprings,
+                            j_conn: jConnForSprings,
+                            spring_i: spring_i_3d,
+                            spring_j: spring_j_3d,
+                            shearKOverride_kN_per_m: shearKOverride,
+                            shearKOverrideRigid
+                        })
+                        : compute2DLocalStiffnessWithEndSpringsEB({
+                            E,
+                            A,
+                            I: Iz,
+                            L,
+                            i_conn: iConnForSprings,
+                            j_conn: jConnForSprings,
+                            spring_i: spring_i_3d,
+                            spring_j: spring_j_3d
+                        });
+
+                    const k2d_y = (hasShearOverride && applyOnLocalZ)
+                        ? compute2DLocalStiffnessWithEndSprings({
+                            E,
+                            A,
+                            I: Iy,
+                            L,
+                            i_conn: iConnForSprings,
+                            j_conn: jConnForSprings,
+                            spring_i: spring_i_3d,
+                            spring_j: spring_j_3d,
+                            shearKOverride_kN_per_m: shearKOverride,
+                            shearKOverrideRigid
+                        })
+                        : compute2DLocalStiffnessWithEndSpringsEB({
+                            E,
+                            A,
+                            I: Iy,
+                            L,
+                            i_conn: iConnForSprings,
+                            j_conn: jConnForSprings,
+                            spring_i: spring_i_3d,
+                            spring_j: spring_j_3d
+                        });
 
                     const k_local_3d = Array.from({ length: 12 }, () => Array(12).fill(0));
                     const copySub = (src, srcIdx, dst, dstIdx, sign) => {
@@ -6481,7 +7140,18 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // 2Dフレーム(6x6)用: 端部条件（剛/ピン/バネ）を柔度で合成し、局所剛性を生成（2D側ロジック移植）
-    function compute2DLocalStiffnessWithEndSprings({ E, A, I, L, i_conn, j_conn, spring_i, spring_j }) {
+    function compute2DLocalStiffnessWithEndSprings({
+        E,
+        A,
+        I,
+        L,
+        i_conn,
+        j_conn,
+        spring_i,
+        spring_j,
+        shearKOverride_kN_per_m = null,
+        shearKOverrideRigid = null
+    }) {
         const zero6 = () => Array.from({ length: 6 }, () => Array(6).fill(0));
         const invert3x3 = (m) => {
             const det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
@@ -6523,7 +7193,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const G = E / (2 * (1 + nu));
         const kappa = 1.5;
         const As = A / kappa;
-        const shear_flex = (G > 0 && As > 0) ? (L / (G * As)) : 0;
+
+        let shear_flex = (G > 0 && As > 0) ? (L / (G * As)) : 0;
+        if (shearKOverrideRigid !== null && shearKOverrideRigid !== undefined) {
+            const rigid = (typeof shearKOverrideRigid === 'boolean')
+                ? shearKOverrideRigid
+                : (String(shearKOverrideRigid).trim() === '1' || String(shearKOverrideRigid).trim().toLowerCase() === 'true');
+            if (rigid) {
+                shear_flex = 0;
+            }
+        }
+        if (shearKOverride_kN_per_m !== null && shearKOverride_kN_per_m !== undefined) {
+            const k = Number(shearKOverride_kN_per_m);
+            if (Number.isFinite(k) && k > 0) {
+                // kN/m を直接与える（2D耐力壁と同様に shear_flex=1/k）
+                shear_flex = 1 / k;
+            }
+        }
 
         const EI = E * I;
         const EA = E * A;
@@ -6998,13 +7684,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // 安全な値取得(断面諸量) 3D用
             // Iw列追加に伴い、A/Zx/Zy 以降のセルインデックスが+1シフト
-            const izMomentInput = row.cells[5]?.querySelector('input');
-            const iyMomentInput = row.cells[6]?.querySelector('input');
-            const jTorsionInput = row.cells[7]?.querySelector('input');
-            const iwWarpingInput = row.cells[8]?.querySelector('input');
-            const aAreaInput = row.cells[9]?.querySelector('input');
-            const zzSectionInput = row.cells[10]?.querySelector('input');
-            const zySectionInput = row.cells[11]?.querySelector('input');
+            const izMomentInput = row.cells[5]?.querySelector('.section-Iz-input') || row.cells[5]?.querySelector('input');
+            const iyMomentInput = row.cells[6]?.querySelector('.section-Iy-input') || row.cells[6]?.querySelector('input');
+            const jTorsionInput = row.cells[7]?.querySelector('.section-J-input') || row.cells[7]?.querySelector('input');
+            const iwWarpingInput = row.cells[8]?.querySelector('.section-Iw-input') || row.cells[8]?.querySelector('input');
+            const aAreaInput = row.cells[9]?.querySelector('.section-A-input') || row.cells[9]?.querySelector('input');
+            const zzSectionInput = row.cells[10]?.querySelector('.section-Zz-input') || row.cells[10]?.querySelector('input');
+            const zySectionInput = row.cells[11]?.querySelector('.section-Zy-input') || row.cells[11]?.querySelector('input');
+
+            const izFactorInput = row.cells[5]?.querySelector('.section-Iz-factor');
+            const iyFactorInput = row.cells[6]?.querySelector('.section-Iy-factor');
+            const jFactorInput = row.cells[7]?.querySelector('.section-J-factor');
+            const iwFactorInput = row.cells[8]?.querySelector('.section-Iw-factor');
+            const aFactorInput = row.cells[9]?.querySelector('.section-A-factor');
+            const zzFactorInput = row.cells[10]?.querySelector('.section-Zz-factor');
+            const zyFactorInput = row.cells[11]?.querySelector('.section-Zy-factor');
+
+            const safeFactor = (el) => {
+                const v = parseFloat(el?.value);
+                return Number.isFinite(v) ? v : 1.0;
+            };
             
             if (!izMomentInput || !iyMomentInput || !jTorsionInput || !aAreaInput || !zzSectionInput || !zySectionInput) {
                 const message = `部材 ${index + 1}: 断面諸量の入力フィールドが見つかりません`;
@@ -7012,12 +7711,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(message);
             }
             
-            const Iz = parseFloat(izMomentInput.value) * 1e-8;
-            const Iy = parseFloat(iyMomentInput.value) * 1e-8;
-            const J = parseFloat(jTorsionInput.value) * 1e-8;
-            const A = parseFloat(aAreaInput.value) * 1e-4;
-            const Zz = parseFloat(zzSectionInput.value) * 1e-6;
-            const Zy = parseFloat(zySectionInput.value) * 1e-6;
+            const Iz = (parseFloat(izMomentInput.value) * safeFactor(izFactorInput)) * 1e-8;
+            const Iy = (parseFloat(iyMomentInput.value) * safeFactor(iyFactorInput)) * 1e-8;
+            const J = (parseFloat(jTorsionInput.value) * safeFactor(jFactorInput)) * 1e-8;
+            const A = (parseFloat(aAreaInput.value) * safeFactor(aFactorInput)) * 1e-4;
+            const Zz = (parseFloat(zzSectionInput.value) * safeFactor(zzFactorInput)) * 1e-6;
+            const Zy = (parseFloat(zySectionInput.value) * safeFactor(zyFactorInput)) * 1e-6;
             
             // 密度列が存在するかどうかでインデックスを調整（より安全な方法）
             const totalCellCount = row.cells.length;
@@ -7054,9 +7753,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const raw = iwWarpingInput?.value;
                 if (raw === undefined || raw === null || String(raw).trim() === '') return undefined;
                 const n = parseFloat(raw);
-                return Number.isFinite(n) ? (n * 1e-12) : undefined;
+                const base = Number.isFinite(n) ? (n * 1e-12) : undefined;
+                return (base !== undefined) ? (base * safeFactor(iwFactorInput)) : undefined;
             })();
-            const iwFromDataset = (row.dataset.iw !== undefined && row.dataset.iw !== '') ? (parseFloat(row.dataset.iw) * 1e-12) : undefined;
+            const iwFromDataset = (row.dataset.iw !== undefined && row.dataset.iw !== '') ? ((parseFloat(row.dataset.iw) * 1e-12) * safeFactor(iwFactorInput)) : undefined;
             const Iw = iwFromInput ?? iwFromDataset;
 
             // 軸情報を取得（3つの個別属性から構築）
@@ -7200,6 +7900,29 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             const bendingSectionModulus = axisProps?.bendingSectionModulus ?? Zz;
 
+            const parseBoolLoose = (v) => {
+                if (typeof v === 'boolean') return v;
+                const s = (v === undefined || v === null) ? '' : String(v).trim().toLowerCase();
+                return (s === '1' || s === 'true' || s === 'yes' || s === 'on');
+            };
+
+            const shearKOverride_kN_per_m = (() => {
+                const raw = row?.dataset?.shearKOverride;
+                if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+                const n = Number(raw);
+                return Number.isFinite(n) ? n : null;
+            })();
+            const shearKOverrideRigid = (row?.dataset?.shearKOverrideRigid !== undefined)
+                ? parseBoolLoose(row.dataset.shearKOverrideRigid)
+                : null;
+            const shearKOverrideAxis = (() => {
+                const raw = row?.dataset?.shearKOverrideAxis;
+                if (!raw) return null;
+                const s = String(raw).trim().toLowerCase();
+                if (s === 'y' || s === 'z' || s === 'both') return s;
+                return null;
+            })();
+
             return {
                 i,
                 j,
@@ -7224,6 +7947,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 j_conn,
                 spring_i,
                 spring_j,
+                shearKOverride_kN_per_m,
+                shearKOverrideRigid,
+                shearKOverrideAxis,
                 bucklingK,
                 k_local,
                 material,
@@ -7232,6 +7958,148 @@ document.addEventListener('DOMContentLoaded', () => {
                 axisProperties: axisProps
             };
         });
+        // --- バネ要素（節点間）テーブルから spring-element を解析部材として追加 ---
+        try {
+            const SPRING_ELEMENT_TABLE_ROW_OFFSET = 1000000;
+            const EPS_SPRING = 1e-9;
+            const RIGID_KN_PER_M = 1e9;
+            const springBody = elements.springElementsTable;
+            if (springBody) {
+                const getCellNumber = (row, idx) => {
+                    const cell = row?.cells?.[idx];
+                    const el = cell?.querySelector('input[type="number"], input');
+                    const v = parseFloat(el?.value);
+                    return Number.isFinite(v) ? v : 0;
+                };
+                const getCellChecked = (row, idx) => {
+                    const cell = row?.cells?.[idx];
+                    const el = cell?.querySelector('input[type="checkbox"]');
+                    return !!el?.checked;
+                };
+                Array.from(springBody.rows).forEach((row, springRowIndex) => {
+                    const iRaw = getCellNumber(row, 1);
+                    const jRaw = getCellNumber(row, 2);
+                    const i = parseInt(iRaw) - 1;
+                    const j = parseInt(jRaw) - 1;
+                    if (i < 0 || j < 0 || i >= nodes.length || j >= nodes.length || i === j) {
+                        console.warn(`⚠️ バネ要素 ${springRowIndex + 1} の節点番号が不正です。スキップします。`);
+                        return;
+                    }
+
+                    const kxT_ui = getCellNumber(row, 3);
+                    const kxC_ui = getCellNumber(row, 4);
+                    const ky_ui = getCellNumber(row, 5);
+                    const rigidT = getCellChecked(row, 3);
+                    const rigidC = getCellChecked(row, 4);
+                    const rigidKy = getCellChecked(row, 5);
+
+                    // UI: kN/mm -> 内部: kN/m
+                    const KxT = kxT_ui * 1000;
+                    const KxC = kxC_ui * 1000;
+                    const Ky = ky_ui * 1000;
+
+                    const ni = nodes[i];
+                    const nj = nodes[j];
+                    const dx = (nj.x ?? 0) - (ni.x ?? 0);
+                    const dy = (nj.y ?? 0) - (ni.y ?? 0);
+                    const dz = (nj.z ?? 0) - (ni.z ?? 0);
+                    const L3 = Math.sqrt(dx ** 2 + dy ** 2 + dz ** 2);
+                    if (!(L3 > 0)) {
+                        console.warn(`⚠️ バネ要素 ${springRowIndex + 1} の長さが0です。スキップします。`);
+                        return;
+                    }
+
+                    const tableRowIndex = SPRING_ELEMENT_TABLE_ROW_OFFSET + springRowIndex;
+
+                    let axialSign = 1;
+                    try {
+                        const map = window.__springAxialSignByMemberRowIndex;
+                        if (map && (tableRowIndex in map)) {
+                            axialSign = (map[tableRowIndex] === -1) ? -1 : 1;
+                        }
+                    } catch (_) {}
+
+                    let KxEff = (axialSign < 0)
+                        ? (rigidC ? RIGID_KN_PER_M : (KxC || 0))
+                        : (rigidT ? RIGID_KN_PER_M : (KxT || 0));
+                    let KyEff = rigidKy ? RIGID_KN_PER_M : (Ky || 0);
+                    if ((KxEff === 0 || KxEff === null) && (KyEff === 0 || KyEff === null)) {
+                        KxEff = EPS_SPRING;
+                        KyEff = EPS_SPRING;
+                    }
+
+                    // 2D互換のk_local(6x6)も持たせる（2D扱い時の安全策）
+                    const L2 = Math.sqrt(dx ** 2 + dy ** 2);
+                    const c = (L2 > 0) ? (dx / L2) : 1;
+                    const s = (L2 > 0) ? (dy / L2) : 0;
+                    const T = [
+                        [c, s, 0, 0, 0, 0],
+                        [-s, c, 0, 0, 0, 0],
+                        [0, 0, 1, 0, 0, 0],
+                        [0, 0, 0, c, s, 0],
+                        [0, 0, 0, -s, c, 0],
+                        [0, 0, 0, 0, 0, 1]
+                    ];
+                    const k_local = [
+                        [KxEff, 0, 0, -KxEff, 0, 0],
+                        [0, KyEff, 0, 0, -KyEff, 0],
+                        [0, 0, 0, 0, 0, 0],
+                        [-KxEff, 0, 0, KxEff, 0, 0],
+                        [0, -KyEff, 0, 0, KyEff, 0],
+                        [0, 0, 0, 0, 0, 0]
+                    ];
+
+                    members.push({
+                        tableRowIndex,
+                        memberType: 'spring-element',
+                        i,
+                        j,
+                        E: 0,
+                        strengthProps: null,
+                        I: 0,
+                        Z: 0,
+                        Iz: 0,
+                        Iy: 0,
+                        J: 0,
+                        Iw: 0,
+                        A: 0,
+                        Zz: 0,
+                        Zy: 0,
+                        ix: 0,
+                        iy: 0,
+                        length: L3,
+                        c,
+                        s,
+                        T,
+                        i_conn: 'rigid',
+                        j_conn: 'rigid',
+                        spring_i: null,
+                        spring_j: null,
+                        bucklingK: 1,
+                        k_local,
+                        material: null,
+                        sectionInfo: null,
+                        sectionAxis: null,
+                        axisProperties: null,
+                        springElement: {
+                            Kx_tension: KxT,
+                            Kx_compression: KxC,
+                            Ky,
+                            rigidKx_tension: !!rigidT,
+                            rigidKx_compression: !!rigidC,
+                            rigidKy: !!rigidKy
+                        },
+                        shearWallId: row?.dataset?.shearWallId || '',
+                        shearWallRole: row?.dataset?.shearWallRole || '',
+                        braceWallId: row?.dataset?.braceWallId || '',
+                        braceWallRole: row?.dataset?.braceWallRole || ''
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn('spring-elements-table の読込でエラー', e);
+        }
+
         const nodeLoads = Array.from(elements.nodeLoadsTable.rows).map((r, i) => { 
             const n = parseInt(r.cells[0].querySelector('input').value) - 1; 
             if (n < 0 || n >= nodes.length) throw new Error(`節点荷重 ${i+1} の節点番号が不正です。`); 
@@ -7247,7 +8115,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         const memberLoads = Array.from(elements.memberLoadsTable.rows).map((r, i) => { 
             const m = parseInt(r.cells[0].querySelector('input').value) - 1; 
-            if (m < 0 || m >= members.length) throw new Error(`部材荷重 ${i+1} の部材番号が不正です。`); 
+            if (m < 0 || m >= membersRows.length) throw new Error(`部材荷重 ${i+1} の部材番号が不正です。`); 
             return { 
                 memberIndex:m, 
                 wx:parseFloat(r.cells[1].querySelector('input').value)||0,
@@ -7885,6 +8753,51 @@ document.addEventListener('DOMContentLoaded', () => {
         const memberLabelPositions = showMemberNumbers ?
             calculateMemberLabelPositions(members, projectedNodes, transform, ctx) : [];
 
+        const drawZigZagSpring = (p1, p2, { axial = false, transverse = false } = {}) => {
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const len = Math.hypot(dx, dy);
+            if (!Number.isFinite(len) || len < 1e-6) return;
+            const ux = dx / len;
+            const uy = dy / len;
+            const nx = -uy;
+            const ny = ux;
+            const midx = (p1.x + p2.x) / 2;
+            const midy = (p1.y + p2.y) / 2;
+
+            const maxLen = Math.min(32, len * 0.45);
+            const amp = 4;
+
+            if (axial) {
+                const seg = 6;
+                const half = maxLen / 2;
+                ctx.beginPath();
+                ctx.moveTo(midx - ux * half, midy - uy * half);
+                for (let i = 1; i < seg; i++) {
+                    const t = -half + (maxLen * i) / seg;
+                    const off = (i % 2 === 0 ? -amp : amp);
+                    ctx.lineTo(midx + ux * t + nx * off, midy + uy * t + ny * off);
+                }
+                ctx.lineTo(midx + ux * half, midy + uy * half);
+                ctx.stroke();
+            }
+
+            if (transverse) {
+                const perpLen = Math.min(22, len * 0.3);
+                const seg = 5;
+                const half = perpLen / 2;
+                ctx.beginPath();
+                ctx.moveTo(midx - nx * half, midy - ny * half);
+                for (let i = 1; i < seg; i++) {
+                    const t = -half + (perpLen * i) / seg;
+                    const off = (i % 2 === 0 ? -amp : amp);
+                    ctx.lineTo(midx + nx * t + ux * off, midy + ny * t + uy * off);
+                }
+                ctx.lineTo(midx + nx * half, midy + ny * half);
+                ctx.stroke();
+            }
+        };
+
         members.forEach((m, memberIndex) => {
             // 両端の節点が表示対象の場合のみ部材を描画
             if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) {
@@ -7893,10 +8806,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const start = transform(projectedNodes[m.i].x, projectedNodes[m.i].y);
             const end = transform(projectedNodes[m.j].x, projectedNodes[m.j].y);
+
+            const isSpringElement = m && m.memberType === 'spring-element';
+            if (isSpringElement) ctx.setLineDash([6, 4]);
+
             ctx.beginPath();
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
             ctx.stroke(); 
+
+            // バネ記号（軸方向/Kx, 直交方向/Ky）を点線の一部として追加
+            if (isSpringElement) {
+                const se = m.springElement || {};
+                const toNum = (v) => {
+                    const n = Number(v);
+                    return Number.isFinite(n) ? n : 0;
+                };
+                const parseBool = (v) => {
+                    const s = (v === undefined || v === null) ? '' : String(v).trim().toLowerCase();
+                    return (s === '1' || s === 'true' || s === 'yes' || s === 'on');
+                };
+
+                const kxT = toNum(se.Kx_tension ?? se.KxT ?? se.Kx ?? se.kx);
+                const kxC = toNum(se.Kx_compression ?? se.KxC ?? se.kx_c);
+                const ky = toNum(se.Ky ?? se.ky);
+                const rT = parseBool(se.rigidKx_tension ?? se.rigidKxT ?? se.rigidT);
+                const rC = parseBool(se.rigidKx_compression ?? se.rigidKxC ?? se.rigidC);
+                const rKy = parseBool(se.rigidKy);
+
+                const hasAxial = (Math.abs(kxT) > 1e-12) || (Math.abs(kxC) > 1e-12) || rT || rC;
+                const hasTrans = (Math.abs(ky) > 1e-12) || rKy;
+
+                // どの剛性も0/未指定でも「バネ要素」であることが分かるよう、最低1つは描画する
+                const any = hasAxial || hasTrans;
+                drawZigZagSpring(start, end, { axial: any ? hasAxial : true, transverse: any ? hasTrans : false });
+            }
+
+            if (isSpringElement) ctx.setLineDash([]);
             
             // 部材番号を表示（改良版：重複回避）
             if (showMemberNumbers) {
@@ -7951,6 +8897,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.lineJoin = 'round';
 
         const showStiffness = document.getElementById('show-spring-stiffness')?.checked ?? true;
+        const showBraceNames = document.getElementById('show-brace-names')?.checked ?? true;
 
         const projectionMode = getCurrentProjectionMode();
         const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode));
@@ -8151,6 +9098,62 @@ document.addEventListener('DOMContentLoaded', () => {
 
             drawEndSprings('i', p_i, true);
             drawEndSprings('j', p_j, false);
+
+            // spring-element: 要素としてのバネ剛性表示（show-spring-stiffness 連動）
+            if (showStiffness && labelManager && m && m.memberType === 'spring-element') {
+                const se = m.springElement || {};
+                const KxT = Number(se.Kx_tension) || 0;
+                const KxC = Number(se.Kx_compression) || 0;
+                const Ky = Number(se.Ky) || 0;
+
+                const parseBool = (v) => {
+                    const s = (v === undefined || v === null) ? '' : String(v).trim().toLowerCase();
+                    return (s === '1' || s === 'true' || s === 'yes' || s === 'on');
+                };
+                const rT = parseBool(se.rigidKx_tension ?? se.rigidKxT);
+                const rC = parseBool(se.rigidKx_compression ?? se.rigidKxC);
+                const rKy = parseBool(se.rigidKy);
+
+                const midX = (p_i.x + p_j.x) / 2;
+                const midY = (p_i.y + p_j.y) / 2;
+
+                // 部材番号ラベル等と被りにくいよう、法線方向に少しオフセット
+                const nx = -Math.sin(angle);
+                const ny = Math.cos(angle);
+                const offset = 10 * (fontScale || 1.0);
+                const targetX = midX + nx * offset;
+                const targetY = midY + ny * offset;
+
+                const text = `Kx(t):${rT ? '剛' : fmt(KxT, 'kN/mm')} Kx(c):${rC ? '剛' : fmt(KxC, 'kN/mm')} Ky:${rKy ? '剛' : fmt(Ky, 'kN/mm')}`;
+                labelManager.draw(ctx, text, targetX, targetY, obstacles, {
+                    drawLeaderLine: true,
+                    color: '#e65100',
+                    type: 'spring-element-stiffness'
+                });
+            }
+
+            // spring-element: ブレース名表示（show-brace-names 連動）
+            if (showBraceNames && labelManager && m && m.memberType === 'spring-element') {
+                const braceWallId = String(m.braceWallId || '').trim();
+                const role = String(m.braceWallRole || '').trim();
+                if (braceWallId && role.startsWith('brace-diag')) {
+                    const midX = (p_i.x + p_j.x) / 2;
+                    const midY = (p_i.y + p_j.y) / 2;
+
+                    // 部材番号・剛性表示と被りにくいよう法線方向にオフセット（剛性表示とは逆側に寄せる）
+                    const nx = -Math.sin(angle);
+                    const ny = Math.cos(angle);
+                    const offset = -18 * (fontScale || 1.0);
+                    const targetX = midX + nx * offset;
+                    const targetY = midY + ny * offset;
+
+                    labelManager.draw(ctx, braceWallId, targetX, targetY, obstacles, {
+                        drawLeaderLine: true,
+                        color: '#444',
+                        type: 'brace-name'
+                    });
+                }
+            }
         });
     };
 
@@ -8353,6 +9356,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
     const drawDimensions = (ctx, transform, nodes, members, labelManager, obstacles) => {
+        const showMemberDimensions = document.getElementById('show-member-dimensions')?.checked ?? true;
+        if (!showMemberDimensions) {
+            return;
+        }
         const offset = 15;
         ctx.strokeStyle = '#0000ff';
         ctx.lineWidth = 1;
@@ -9379,12 +10386,11 @@ document.addEventListener('DOMContentLoaded', () => {
                             ctx.strokeStyle = labelColor;
                         }
                         if (leaderLine) {
-                            const centerX = (rect.x1 + rect.x2) / 2;
-                            const centerY = (rect.y1 + rect.y2) / 2;
                             ctx.lineWidth = 1;
                             ctx.beginPath();
                             ctx.moveTo(targetX, targetY);
-                            ctx.lineTo(centerX, centerY);
+                            // 2Dと同様: 候補点(x,y)へ引く（ラベル中心へ引くとズレが目立つ）
+                            ctx.lineTo(x, y);
                             ctx.stroke();
                         }
                         ctx.fillText(text, x, y);
@@ -9428,12 +10434,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         ctx.strokeStyle = labelColor;
                     }
                     if (leaderLine) {
-                        const centerX = (rect.x1 + rect.x2) / 2;
-                        const centerY = (rect.y1 + rect.y2) / 2;
                         ctx.lineWidth = 1;
                         ctx.beginPath();
                         ctx.moveTo(targetX, targetY);
-                        ctx.lineTo(centerX, centerY);
+                        ctx.lineTo(x, y);
                         ctx.stroke();
                     }
                     ctx.fillText(text, x, y);
@@ -9515,6 +10519,48 @@ document.addEventListener('DOMContentLoaded', () => {
                     ctx.beginPath();
                     ctx.arc(pos.x, pos.y, 8, 0, 2 * Math.PI);
                     ctx.fill();
+                }
+
+                // 耐力壁（ブレース置換）追加モード: 2点クリックのプレビュー
+                if (canvasMode === 'addShearWall') {
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(0, 120, 255, 0.9)';
+                    ctx.fillStyle = 'rgba(0, 120, 255, 0.15)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 4]);
+
+                    if (shearWallAddStartPointModel !== null) {
+                        const startPos = transform(shearWallAddStartPointModel.x, shearWallAddStartPointModel.y);
+                        const endModel = inverseTransform(currentMouseX, currentMouseY);
+                        if (endModel) {
+                            const endPos = transform(endModel.x, endModel.y);
+                            const x = Math.min(startPos.x, endPos.x);
+                            const y = Math.min(startPos.y, endPos.y);
+                            const w = Math.abs(endPos.x - startPos.x);
+                            const h = Math.abs(endPos.y - startPos.y);
+                            ctx.beginPath();
+                            ctx.rect(x, y, w, h);
+                            ctx.fill();
+                            ctx.stroke();
+                        }
+
+                        // 開始点を強調
+                        ctx.setLineDash([]);
+                        ctx.fillStyle = 'rgba(0, 120, 255, 0.6)';
+                        ctx.beginPath();
+                        ctx.arc(startPos.x, startPos.y, 8, 0, 2 * Math.PI);
+                        ctx.fill();
+                    }
+
+                    // 簡易ガイド
+                    ctx.setLineDash([]);
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.font = '12px sans-serif';
+                    const msg = (shearWallAddStartPointModel === null)
+                        ? '耐力壁追加: 節点をクリックして1点目を選択'
+                        : '耐力壁追加: 節点をクリックして2点目（対角）を選択';
+                    ctx.fillText(msg, 10, 20);
+                    ctx.restore();
                 }
             }
         } catch (e) {
@@ -13508,12 +14554,19 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     const setCanvasMode = (newMode) => {
         canvasMode = newMode;
         firstMemberNode = null;
+
+        // 耐力壁追加モードから抜けたら選択状態をリセット
+        if (newMode !== 'addShearWall') {
+            shearWallAddStartNodeId = null;
+            shearWallAddStartPointModel = null;
+            shearWallAddPlane = null;
+        }
         const kebabCaseMode = newMode.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
         document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
         const modeBtn = document.getElementById(`mode-${kebabCaseMode}`);
         if (modeBtn) modeBtn.classList.add('active');
         if (elements.modelCanvas) {
-            elements.modelCanvas.style.cursor = { select: 'default', addNode: 'crosshair', addMember: 'copy' }[newMode];
+            elements.modelCanvas.style.cursor = { select: 'default', addNode: 'crosshair', addMember: 'copy', addShearWall: 'crosshair' }[newMode] || 'default';
         }
 
         // 3Dビューも更新
@@ -14034,6 +15087,10 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         const rect = elements.modelCanvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
+
+        // マウス位置を保存（耐力壁追加モードのプレビュー等に使用）
+        currentMouseX = mouseX;
+        currentMouseY = mouseY;
         
         // デバッグ：1%の確率でマウス移動の詳細を出力
         if (Math.random() < 0.01) {
@@ -14081,6 +15138,9 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         
         if (isRangeSelecting && canvasMode === 'select') {
             multiSelectEnd = { x: mouseX, y: mouseY };
+            drawOnCanvas();
+        } else if (canvasMode === 'addShearWall' && shearWallAddStartPointModel !== null) {
+            // 耐力壁追加モードの矩形プレビュー
             drawOnCanvas();
         } else if (isDragging && canvasMode === 'select' && selectedNodeIndex !== null && selectedNodeIndex !== -1) {
             const projectionMode = getCurrentProjectionMode();
@@ -14170,6 +15230,217 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     });
     elements.modelCanvas.addEventListener('click', (e) => { 
         const rect = elements.modelCanvas.getBoundingClientRect(); let mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top; const clickedNodeIndex = getNodeAt(mouseX, mouseY); 
+
+        if (canvasMode === 'addShearWall') {
+            const resetShearWallAddState = () => {
+                shearWallAddStartNodeId = null;
+                shearWallAddStartPointModel = null;
+                shearWallAddPlane = null;
+                if (typeof drawOnCanvas === 'function') drawOnCanvas();
+            };
+
+            try {
+                const projectionMode = getCurrentProjectionMode();
+                if (projectionMode === 'iso') {
+                    alert('耐力壁追加（2点クリック）は、投影モードを xy / xz / yz に切り替えてください。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                const { nodes } = parseInputs();
+                if (!nodes || nodes.length === 0) return;
+
+                const visibleNodeIndices = getVisibleNodeIndices(nodes);
+
+                // 1点目/2点目とも「節点クリック」必須（判定を少し甘くする）
+                const pickNodeIndexForShearWall = (cx, cy) => {
+                    if (!window.lastDrawingContext) return -1;
+                    const tolerance = 22;
+                    let bestIdx = -1;
+                    let bestDist = Infinity;
+                    for (let i = 0; i < nodes.length; i++) {
+                        if (!visibleNodeIndices.has(i)) continue;
+                        const n = nodes[i];
+                        if (!n) continue;
+                        const p2 = project3DTo2D(n, projectionMode);
+                        const p = window.lastDrawingContext.transform(p2.x, p2.y);
+                        const dx = cx - p.x;
+                        const dy = cy - p.y;
+                        const d = Math.sqrt(dx * dx + dy * dy);
+                        if (d <= tolerance && d < bestDist) {
+                            bestDist = d;
+                            bestIdx = i;
+                        }
+                    }
+                    return bestIdx;
+                };
+
+                const pickedIndex = (clickedNodeIndex !== -1) ? clickedNodeIndex : pickNodeIndexForShearWall(mouseX, mouseY);
+                if (pickedIndex === -1) return;
+
+                const clickedNode = nodes[pickedIndex];
+                if (!clickedNode) return;
+
+                const depthAxis = (projectionMode === 'xy') ? 'z' : (projectionMode === 'xz') ? 'y' : 'x';
+                const depthValue = Number(clickedNode[depthAxis] ?? 0);
+                const depthTol = 0.01;
+
+                const clickedProj = project3DTo2D(clickedNode, projectionMode);
+
+                if (shearWallAddStartPointModel === null) {
+                    shearWallAddStartNodeId = pickedIndex + 1;
+                    shearWallAddStartPointModel = { x: clickedProj.x, y: clickedProj.y };
+                    shearWallAddPlane = { projectionMode, depthAxis, depthValue };
+                    drawOnCanvas();
+                    return;
+                }
+
+                if (!shearWallAddPlane || shearWallAddPlane.projectionMode !== projectionMode) {
+                    alert('耐力壁追加: 1点目と同じ投影モードで2点目を選択してください。');
+                    resetShearWallAddState();
+                    return;
+                }
+                if (Math.abs(depthValue - Number(shearWallAddPlane.depthValue ?? 0)) > depthTol) {
+                    alert('耐力壁追加: 同一平面（同一の隠し軸座標）の2点を選択してください。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                const start = shearWallAddStartPointModel;
+                const end = { x: clickedProj.x, y: clickedProj.y };
+                if (Math.abs(start.x - end.x) < 1e-12 && Math.abs(start.y - end.y) < 1e-12) {
+                    resetShearWallAddState();
+                    return;
+                }
+
+                const xMin = Math.min(start.x, end.x);
+                const xMax = Math.max(start.x, end.x);
+                const yMin = Math.min(start.y, end.y);
+                const yMax = Math.max(start.y, end.y);
+
+                if (Math.abs(xMax - xMin) < 1e-9 || Math.abs(yMax - yMin) < 1e-9) {
+                    alert('耐力壁追加: 対角2点は縦横に離れた2点を選択してください。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                const api = window.__shearWalls;
+                if (!api) {
+                    alert('耐力壁追加: 耐力壁APIが初期化されていません。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                const addType = pendingAddShearWallType || 'brace';
+                if (addType !== 'brace') {
+                    alert('耐力壁追加: 3D統合版では現在「ブレース置換」のみキャンバス追加に対応しています。');
+                    resetShearWallAddState();
+                    return;
+                }
+                const addFn = api.addBraceWallRowWithNodes;
+                if (typeof addFn !== 'function') {
+                    alert('耐力壁追加: 追加APIが初期化されていません。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                const tolKey = (v) => Math.round(v * 1e6) / 1e6;
+                const keyXY = (x, y) => `${tolKey(x)},${tolKey(y)}`;
+
+                const nodeIdByKey = new Map();
+                for (let i = 0; i < nodes.length; i++) {
+                    if (!visibleNodeIndices.has(i)) continue;
+                    const n = nodes[i];
+                    if (!n) continue;
+                    const d = Number(n[depthAxis] ?? 0);
+                    if (Math.abs(d - depthValue) > depthTol) continue;
+                    const p2 = project3DTo2D(n, projectionMode);
+                    nodeIdByKey.set(keyXY(p2.x, p2.y), i + 1);
+                }
+
+                const xs = new Set();
+                const ys = new Set();
+                for (let i = 0; i < nodes.length; i++) {
+                    if (!visibleNodeIndices.has(i)) continue;
+                    const n = nodes[i];
+                    if (!n) continue;
+                    const d = Number(n[depthAxis] ?? 0);
+                    if (Math.abs(d - depthValue) > depthTol) continue;
+                    const p2 = project3DTo2D(n, projectionMode);
+                    if (p2.x < xMin - 1e-9 || p2.x > xMax + 1e-9) continue;
+                    if (p2.y < yMin - 1e-9 || p2.y > yMax + 1e-9) continue;
+                    xs.add(tolKey(p2.x));
+                    ys.add(tolKey(p2.y));
+                }
+                const xList = Array.from(xs).sort((a, b) => a - b);
+                const yList = Array.from(ys).sort((a, b) => a - b);
+                if (xList.length < 2 || yList.length < 2) {
+                    alert('耐力壁追加: 選択範囲内に格子（節点の列/段）が不足しています。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                const existing = new Set();
+                try {
+                    if (elements.braceWallsTable) {
+                        for (const r of Array.from(elements.braceWallsTable.rows)) {
+                            const ins = Array.from(r.querySelectorAll('input.bracewall-node'));
+                            if (ins.length >= 4) {
+                                const lb = parseInt(ins[0].value, 10);
+                                const lt = parseInt(ins[1].value, 10);
+                                const rb = parseInt(ins[2].value, 10);
+                                const rt = parseInt(ins[3].value, 10);
+                                if ([lb, lt, rb, rt].every(v => Number.isFinite(v) && v > 0)) {
+                                    existing.add(`${lb},${lt},${rb},${rt}`);
+                                }
+                            }
+                        }
+                    }
+                } catch (_) {}
+
+                const kind = pendingBraceWallKind || 'tension';
+                let addedCount = 0;
+
+                try { pushState(); } catch (_) {}
+                for (let xi = 0; xi < xList.length - 1; xi++) {
+                    for (let yi = 0; yi < yList.length - 1; yi++) {
+                        const xL = xList[xi];
+                        const xR = xList[xi + 1];
+                        const yB = yList[yi];
+                        const yT = yList[yi + 1];
+
+                        const lb = nodeIdByKey.get(keyXY(xL, yB));
+                        const lt = nodeIdByKey.get(keyXY(xL, yT));
+                        const rb = nodeIdByKey.get(keyXY(xR, yB));
+                        const rt = nodeIdByKey.get(keyXY(xR, yT));
+                        if (!lb || !lt || !rb || !rt) continue;
+
+                        const k = `${lb},${lt},${rb},${rt}`;
+                        if (existing.has(k)) continue;
+                        existing.add(k);
+                        addFn({ lb, lt, rb, rt, kind });
+                        addedCount++;
+                    }
+                }
+
+                if (addedCount === 0) {
+                    alert('耐力壁追加: 追加できるパネルがありません（節点の配置を確認してください）。');
+                    resetShearWallAddState();
+                    return;
+                }
+
+                if (typeof api.applyBraceWallsToModel === 'function') {
+                    try { api.applyBraceWallsToModel({ silent: true }); } catch (e) { console.warn('applyBraceWallsToModel failed', e); }
+                }
+
+                resetShearWallAddState();
+            } catch (e) {
+                console.warn('耐力壁追加モードでエラー', e);
+                resetShearWallAddState();
+            }
+            return;
+        }
+
         if (canvasMode === 'addNode') {
             const targetMemberIndex = getMemberAt(mouseX, mouseY);
             let modelCoords = inverseTransform(mouseX, mouseY); if (!modelCoords) return;
@@ -14896,26 +16167,50 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     // ポップアップのドラッグ機能を追加する関数
     function makePopupDraggable(popup) {
         if (!popup) return;
+
+        try {
+            if (popup.dataset && popup.dataset.popupDraggableBound === '1') return;
+            if (popup.dataset) popup.dataset.popupDraggableBound = '1';
+        } catch (_) {}
         
         let isDragging = false;
         let dragOffset = { x: 0, y: 0 };
         
-        // ヘッダー部分を取得（h4タグまたはポップアップ全体）
-        const header = popup.querySelector('h4') || popup;
+        // ヘッダー部分を取得（モーダル/ポップアップの見出しを優先）
+        const header = popup.querySelector('.modal-header') || popup.querySelector('h4') || popup.firstElementChild || popup;
         if (!header) return;
         
         // ヘッダーにドラッグ可能であることを示すスタイルを適用
         header.style.cursor = 'move';
         header.style.userSelect = 'none';
+
+        function shouldIgnoreDragStart(e) {
+            try {
+                const t = e && e.target ? e.target : null;
+                if (!t || !t.closest) return false;
+                // 入力操作・ボタン操作はドラッグ開始しない
+                if (t.closest('input, textarea, select, button, label, a')) return true;
+            } catch (_) {}
+            return false;
+        }
         
         function startDrag(e) {
+            if (e && e.button !== undefined && e.button !== 0) return; // 左クリックのみ
+            if (shouldIgnoreDragStart(e)) return;
             isDragging = true;
             const popupRect = popup.getBoundingClientRect();
             dragOffset.x = e.clientX - popupRect.left;
             dragOffset.y = e.clientY - popupRect.top;
+
+            // left/top が未設定のときもドラッグできるように現在位置を固定値化
+            if (!popup.style.left) popup.style.left = `${popupRect.left}px`;
+            if (!popup.style.top) popup.style.top = `${popupRect.top}px`;
+            popup.style.position = 'fixed';
             
             // ポップアップを最前面に移動とドラッグスタイル適用
-            popup.style.zIndex = '1002';
+            const prevZ = popup.style.zIndex || window.getComputedStyle(popup).zIndex || '';
+            popup.dataset.prevZIndex = prevZ;
+            popup.style.zIndex = '300000';
             popup.classList.add('popup-dragging');
             
             document.addEventListener('mousemove', doDrag);
@@ -14949,7 +16244,12 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             if (isDragging) {
                 isDragging = false;
                 // z-indexを元に戻してドラッグスタイルを削除
-                popup.style.zIndex = '1001';
+                try {
+                    if (popup.dataset && popup.dataset.prevZIndex !== undefined) {
+                        popup.style.zIndex = popup.dataset.prevZIndex;
+                        delete popup.dataset.prevZIndex;
+                    }
+                } catch (_) {}
                 popup.classList.remove('popup-dragging');
                 document.removeEventListener('mousemove', doDrag);
                 document.removeEventListener('mouseup', stopDrag);
@@ -14995,9 +16295,13 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     }
     
     // 全てのポップアップにドラッグ機能を適用
-    makePopupDraggable(elements.memberPropsPopup);
-    makePopupDraggable(elements.addMemberPopup);
-    makePopupDraggable(elements.nodeLoadPopup);
+    try {
+        const popupBoxes = Array.from(document.querySelectorAll('.popup-box'));
+        const modalContents = Array.from(document.querySelectorAll('.modal .modal-content'));
+        [...popupBoxes, ...modalContents].forEach(makePopupDraggable);
+    } catch (e) {
+        console.warn('ポップアップのドラッグ機能適用に失敗', e);
+    }
 
     document.addEventListener('click', (e) => { 
         if (elements.modeAddMemberBtn && elements.modeAddMemberBtn.contains(e.target)) return;
@@ -15712,6 +17016,7 @@ const createEInputHTML = (idPrefix, currentE = '205000') => {
                 input.readOnly = isPreset;
                 
                 const div = document.createElement('div');
+                div.classList.add('strength-input-wrapper');
                 div.setAttribute('data-strength-type', 'F-value');
                 div.appendChild(select);
                 div.appendChild(input);
@@ -15797,14 +17102,14 @@ const createEInputHTML = (idPrefix, currentE = '205000') => {
             case 'stainless': {
                 const stainValue = currentValue || '205';
                 const isPreset = ['205', '235'].includes(stainValue);
-                htmlContent = `<div data-strength-type="F-stainless"><select id="${selectId}" onchange="const input = document.getElementById('${inputId}'); input.value = this.value; input.readOnly = (this.value !== 'custom');"><option value="205" ${stainValue === '205' ? 'selected' : ''}>SUS304</option><option value="235" ${stainValue === '235' ? 'selected' : ''}>SUS316</option><option value="custom" ${!isPreset ? 'selected' : ''}>任意入力</option></select><input id="${inputId}" type="number" value="${stainValue}" ${isPreset ? 'readonly' : ''}></div>`;
+                htmlContent = `<div class="strength-input-wrapper" data-strength-type="F-stainless"><select id="${selectId}" onchange="const input = document.getElementById('${inputId}'); input.value = this.value; input.readOnly = (this.value !== 'custom');"><option value="205" ${stainValue === '205' ? 'selected' : ''}>SUS304</option><option value="235" ${stainValue === '235' ? 'selected' : ''}>SUS316</option><option value="custom" ${!isPreset ? 'selected' : ''}>任意入力</option></select><input id="${inputId}" type="number" value="${stainValue}" ${isPreset ? 'readonly' : ''}></div>`;
                 wrapper.innerHTML = htmlContent;
                 return wrapper.firstElementChild;
             }
             case 'aluminum': {
                 const alumValue = currentValue || '150';
                 const isPreset = ['150', '185'].includes(alumValue);
-                htmlContent = `<div data-strength-type="F-aluminum"><select id="${selectId}" onchange="const input = document.getElementById('${inputId}'); input.value = this.value; input.readOnly = (this.value !== 'custom');"><option value="150" ${alumValue === '150' ? 'selected' : ''}>A5052</option><option value="185" ${alumValue === '185' ? 'selected' : ''}>A6061-T6</option><option value="custom" ${!isPreset ? 'selected' : ''}>任意入力</option></select><input id="${inputId}" type="number" value="${alumValue}" ${isPreset ? 'readonly' : ''}></div>`;
+                htmlContent = `<div class="strength-input-wrapper" data-strength-type="F-aluminum"><select id="${selectId}" onchange="const input = document.getElementById('${inputId}'); input.value = this.value; input.readOnly = (this.value !== 'custom');"><option value="150" ${alumValue === '150' ? 'selected' : ''}>A5052</option><option value="185" ${alumValue === '185' ? 'selected' : ''}>A6061-T6</option><option value="custom" ${!isPreset ? 'selected' : ''}>任意入力</option></select><input id="${inputId}" type="number" value="${alumValue}" ${isPreset ? 'readonly' : ''}></div>`;
                 wrapper.innerHTML = htmlContent;
                 return wrapper.firstElementChild;
             }
@@ -15872,18 +17177,70 @@ const createEInputHTML = (idPrefix, currentE = '205000') => {
     window.createDensityInputHTML = createDensityInputHTML;
 
     const memberRowHTML = (i, j, E = '205000', F='235', Iz = 1.84e-5, Iy = 6.13e-6, J = 2.35e-6, Iw = '', A = 2.34e-3, Zz = 1.23e-3, Zy = 4.10e-4, i_conn = 'rigid', j_conn = 'rigid', sectionName = '', sectionAxis = '', bucklingK = '') => {
+        const buildReductionCell = ({
+            baseValue,
+            baseClass,
+            factorClass,
+            title,
+            decimals = 2
+        }) => {
+            const safeBaseValue = (baseValue === undefined || baseValue === null) ? '' : `${baseValue}`;
+            return `
+                <div class="cell-input-wrapper reduction-wrapper" data-reduction-decimals="${decimals}">
+                    <input type="number" class="reduction-base-input ${baseClass}" value="${safeBaseValue}" title="${title}">
+                    <div><span>低減係数：</span><input type="number" class="reduction-factor-input ${factorClass}" value="1.0" step="0.01" title="低減係数" placeholder="低減係数"></div>
+                    <div class="reduced-label" style="display:none;">低減後：<span class="reduced-value"></span></div>
+                </div>
+            `;
+        };
+
         const baseColumns = [
             `<input type="number" value="${i}">`,
             `<input type="number" value="${j}">`,
             createEInputHTML(`member-e-${i}-${j}`, E),
             createStrengthInputHTML('steel', `member-strength-${i}-${j}`, F),
-            `<input type="number" value="${(Iz * 1e8).toFixed(2)}" title="強軸断面二次モーメント Iz (cm⁴)">`,
-            `<input type="number" value="${(Iy * 1e8).toFixed(2)}" title="弱軸断面二次モーメント Iy (cm⁴)">`,
-            `<input type="number" value="${(J * 1e8).toFixed(2)}" title="ねじり定数 J (cm⁴)">`,
-            `<input type="number" value="${(Iw === '' || Iw === undefined || Iw === null) ? '' : (Number(Iw) * 1e12).toFixed(2)}" title="曲げねじり定数 Iw (cm⁶)">`,
-            `<input type="number" value="${(A * 1e4).toFixed(2)}" title="断面積 A (cm²)">`,
-            `<input type="number" value="${(Zz * 1e6).toFixed(2)}" title="強軸断面係数 Zz (cm³)">`,
-            `<input type="number" value="${(Zy * 1e6).toFixed(2)}" title="弱軸断面係数 Zy (cm³)">`
+            buildReductionCell({
+                baseValue: (Iz * 1e8).toFixed(2),
+                baseClass: 'section-Iz-input',
+                factorClass: 'section-Iz-factor',
+                title: '強軸断面二次モーメント Iz (cm⁴)'
+            }),
+            buildReductionCell({
+                baseValue: (Iy * 1e8).toFixed(2),
+                baseClass: 'section-Iy-input',
+                factorClass: 'section-Iy-factor',
+                title: '弱軸断面二次モーメント Iy (cm⁴)'
+            }),
+            buildReductionCell({
+                baseValue: (J * 1e8).toFixed(2),
+                baseClass: 'section-J-input',
+                factorClass: 'section-J-factor',
+                title: 'ねじり定数 J (cm⁴)'
+            }),
+            buildReductionCell({
+                baseValue: (Iw === '' || Iw === undefined || Iw === null) ? '' : (Number(Iw) * 1e12).toFixed(2),
+                baseClass: 'section-Iw-input',
+                factorClass: 'section-Iw-factor',
+                title: '曲げねじり定数 Iw (cm⁶)'
+            }),
+            buildReductionCell({
+                baseValue: (A * 1e4).toFixed(2),
+                baseClass: 'section-A-input',
+                factorClass: 'section-A-factor',
+                title: '断面積 A (cm²)'
+            }),
+            buildReductionCell({
+                baseValue: (Zz * 1e6).toFixed(2),
+                baseClass: 'section-Zz-input',
+                factorClass: 'section-Zz-factor',
+                title: '強軸断面係数 Zz (cm³)'
+            }),
+            buildReductionCell({
+                baseValue: (Zy * 1e6).toFixed(2),
+                baseClass: 'section-Zy-input',
+                factorClass: 'section-Zy-factor',
+                title: '弱軸断面係数 Zy (cm³)'
+            })
         ];
 
         // バネ入力部分のHTMLテンプレート生成関数（2Dと同様のDOM）
@@ -18096,8 +19453,1157 @@ const loadPreset = (index) => {
         }
         alert('接続可能なすべての節点ペアは既に接続されています。');
     };
+
+    // バネ要素（節点間）追加
+    if (elements.springElementsTable && elements.addSpringElementRowBtn) {
+        elements.addSpringElementRowBtn.onclick = () => {
+            const nodeCount = elements.nodesTable.rows.length;
+            if (nodeCount < 2) {
+                alert('バネ要素を追加するには少なくとも2つの節点が必要です。');
+                return;
+            }
+
+            // 既存の接続ペア（部材＋バネ要素）を把握
+            const existingPairs = new Set();
+            Array.from(elements.membersTable.rows).forEach(row => {
+                const i = parseInt(row.cells[1].querySelector('input').value);
+                const j = parseInt(row.cells[2].querySelector('input').value);
+                existingPairs.add(`${Math.min(i, j)}-${Math.max(i, j)}`);
+            });
+            Array.from(elements.springElementsTable.rows).forEach(row => {
+                const i = parseInt(row.cells[1].querySelector('input').value);
+                const j = parseInt(row.cells[2].querySelector('input').value);
+                existingPairs.add(`${Math.min(i, j)}-${Math.max(i, j)}`);
+            });
+
+            // 未接続ペアがあればそれを採用、なければ(1,2)
+            let pickedI = 1;
+            let pickedJ = 2;
+            outer: for (let i = 1; i <= nodeCount; i++) {
+                for (let j = i + 1; j <= nodeCount; j++) {
+                    if (!existingPairs.has(`${i}-${j}`)) {
+                        pickedI = i;
+                        pickedJ = j;
+                        break outer;
+                    }
+                }
+            }
+
+            addRow(elements.springElementsTable, [
+                '#',
+                `<input type="number" value="${pickedI}" min="1" step="1">`,
+                `<input type="number" value="${pickedJ}" min="1" step="1">`,
+                `<div style="display:flex; align-items:center; gap:8px;">
+                    <input type="number" value="0" step="0.01" style="flex:1; min-width:0;">
+                    <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                        <input type="checkbox">剛
+                    </label>
+                </div>`,
+                `<div style="display:flex; align-items:center; gap:8px;">
+                    <input type="number" value="0" step="0.01" style="flex:1; min-width:0;">
+                    <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                        <input type="checkbox">剛
+                    </label>
+                </div>`,
+                `<div style="display:flex; align-items:center; gap:8px;">
+                    <input type="number" value="0" step="0.01" style="flex:1; min-width:0;">
+                    <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                        <input type="checkbox">剛
+                    </label>
+                </div>`
+            ]);
+        };
+    }
     elements.addNodeLoadBtn.onclick = () => { addRow(elements.nodeLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">']); };
     elements.addMemberLoadBtn.onclick = () => { addRow(elements.memberLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">']); };
+
+    // --- 2D由来: 耐力壁（ブレース置換）を3Dへ配線 ---
+    const initializeShearWallsFeature3D = () => {
+        if (window.__shearWalls && window.__shearWalls.__initialized3D) return;
+
+        if (!elements.braceWallsTable || !elements.springElementsTable) {
+            window.__shearWalls = window.__shearWalls || {};
+            window.__shearWalls.__initialized3D = true;
+            return;
+        }
+
+        const warnOrAlert = (msg) => {
+            try {
+                console.warn(msg);
+                const errorBox = document.getElementById('error-message');
+                if (errorBox) {
+                    errorBox.textContent = msg;
+                }
+            } catch (_) {}
+        };
+
+        // 2D同様: display だけでなく visibility も制御し、確実に中央表示する
+        const setCenteredPopupVisible = (popup, visible) => {
+            if (!popup) return;
+
+            popup.style.display = visible ? 'block' : 'none';
+            popup.style.visibility = visible ? 'visible' : 'hidden';
+            popup.style.opacity = visible ? '1' : '0';
+            popup.style.pointerEvents = visible ? 'auto' : 'none';
+
+            if (!visible) return;
+
+            popup.style.position = 'fixed';
+            popup.style.zIndex = '200000';
+            popup.style.transform = 'none';
+
+            try {
+                const rect = popup.getBoundingClientRect();
+                const w = rect.width || 420;
+                const h = rect.height || 260;
+                const margin = 10;
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+                let left = (vw - w) / 2;
+                let top = (vh - h) / 2;
+                left = Math.max(margin, Math.min(left, vw - w - margin));
+                top = Math.max(margin, Math.min(top, vh - h - margin));
+                popup.style.left = `${left}px`;
+                popup.style.top = `${top}px`;
+            } catch (_) {}
+        };
+
+        const parseNumber = (v, fallback = 0) => {
+            const n = parseFloat(v);
+            return Number.isFinite(n) ? n : fallback;
+        };
+
+        const getNodesFromTable3D = () => {
+            const out = [];
+            Array.from(elements.nodesTable.rows).forEach((row) => {
+                const x = parseNumber(row.cells[1]?.querySelector('input')?.value, 0);
+                const y = parseNumber(row.cells[2]?.querySelector('input')?.value, 0);
+                const z = parseNumber(row.cells[3]?.querySelector('input')?.value, 0);
+                out.push({ x, y, z });
+            });
+            return out;
+        };
+
+        let wallCsvLibrary = { byId: new Map(), items: [] };
+        let jointCsvLibrary = { byId: new Map(), items: [] };
+
+        const parseSimpleCsv = (text) => {
+            // 2Dと同様に、先頭のコメント行(# ...)をスキップ
+            // ※同梱CSVは説明コメントから始まるため、これが無いと読込件数が0になる
+            const lines = String(text || '')
+                .replace(/\r\n/g, '\n')
+                .split('\n')
+                .map(s => String(s).trim())
+                .filter(s => s.length > 0 && !s.startsWith('#'));
+            if (lines.length < 2) return [];
+            const headers = lines[0]
+                .split(',')
+                .map((s, idx) => {
+                    const v = String(s).trim();
+                    // UTF-8 BOM対策（先頭列のみ）
+                    return (idx === 0) ? v.replace(/^\uFEFF/, '') : v;
+                });
+            const rows = [];
+            for (let i = 1; i < lines.length; i++) {
+                const cols = lines[i].split(',');
+                const obj = {};
+                headers.forEach((h, idx) => { obj[h] = (cols[idx] ?? '').trim(); });
+                rows.push(obj);
+            }
+            return rows;
+        };
+
+        const loadWallCsvText = (text) => {
+            const rows = parseSimpleCsv(text);
+            const byId = new Map();
+            const items = [];
+            rows.forEach(r => {
+                const id = String(r.id || r.ID || r.Id || r.key || r.Key || '').trim();
+                if (!id) return;
+                const name = String(r.name || r.Name || r.label || r.Label || id).trim();
+                const k_theta = parseNumber(r.k_theta_kN_per_rad_per_m ?? r.k_theta ?? r.k ?? r.K, NaN);
+                const q_allow = parseNumber(r.q_allow_short_kN_per_m ?? r.q_allow_short ?? r.q_allow ?? r.q ?? '', NaN);
+                const item = { id, name, k_theta_kN_per_rad_per_m: k_theta, q_allow_short_kN_per_m: q_allow };
+                byId.set(id, item);
+                items.push(item);
+            });
+            wallCsvLibrary = { byId, items };
+        };
+
+        const loadJointCsvText = (text) => {
+            const rows = parseSimpleCsv(text);
+            const byId = new Map();
+            const items = [];
+            rows.forEach(r => {
+                const id = String(r.id || r.ID || r.Id || r.key || r.Key || '').trim();
+                if (!id) return;
+                const name = String(r.name || r.Name || r.label || r.Label || id).trim();
+                const item = { id, name, raw: r };
+                byId.set(id, item);
+                items.push(item);
+            });
+            jointCsvLibrary = { byId, items };
+        };
+
+        const populateWallPresetSelect = (selectEl, { includeBlank = true } = {}) => {
+            if (!selectEl) return;
+            const current = selectEl.value;
+            selectEl.innerHTML = '';
+            if (includeBlank) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = wallCsvLibrary.items.length > 0 ? '（未選択）' : '（wall.csv未読込）';
+                selectEl.appendChild(opt);
+            }
+            wallCsvLibrary.items.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.id;
+                opt.textContent = `${item.id}${item.name ? ' ' + item.name : ''}`;
+                selectEl.appendChild(opt);
+            });
+            if (current) selectEl.value = current;
+        };
+
+        const populateJointPresetSelect = (selectEl, { includeBlank = true } = {}) => {
+            if (!selectEl) return;
+            const current = selectEl.value;
+            selectEl.innerHTML = '';
+            if (includeBlank) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = jointCsvLibrary.items.length > 0 ? '（未選択）' : '（joint.csv未読込）';
+                selectEl.appendChild(opt);
+            }
+            jointCsvLibrary.items.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.id;
+                opt.textContent = `${item.id}${item.name ? ' ' + item.name : ''}`;
+                selectEl.appendChild(opt);
+            });
+            if (current) selectEl.value = current;
+        };
+
+        const scheduleAutoApply = (() => {
+            let t = null;
+            return () => {
+                if (t) clearTimeout(t);
+                t = setTimeout(() => {
+                    try {
+                        if (window.__shearWalls && typeof window.__shearWalls.applyBraceWallsToModel === 'function') {
+                            window.__shearWalls.applyBraceWallsToModel({ silent: true });
+                        }
+                    } catch (e) {
+                        console.warn('auto apply brace walls failed', e);
+                    }
+                }, 200);
+            };
+        })();
+
+        const renumberBraceWallTable = () => {
+            try {
+                Array.from(elements.braceWallsTable.rows).forEach((row, idx) => {
+                    if (row.cells[0]) row.cells[0].textContent = String(idx + 1);
+                });
+            } catch (_) {}
+        };
+
+        // --- brace wall row ---
+        let nextBraceWallId = 1;
+        const genBraceWallId = () => `BW${nextBraceWallId++}`;
+
+        const addBraceWallRow = (options = {}) => {
+            const isInitial = !!options.isInitial;
+            const kind = (options.kind === 'both' || options.kind === 'tension') ? options.kind : 'tension';
+            const row = elements.braceWallsTable.insertRow();
+            const braceWallId = String(options.braceWallId || genBraceWallId());
+            row.dataset.braceWallId = braceWallId;
+            row.dataset.braceWallKind = kind;
+
+            // Undo: テーブル行の編集開始時に一度だけ履歴を積む
+            try {
+                let pushed = false;
+                row.addEventListener('focusin', () => {
+                    if (pushed) return;
+                    try { pushState(); } catch (_) {}
+                    pushed = true;
+                });
+                row.addEventListener('focusout', () => {
+                    setTimeout(() => {
+                        try {
+                            if (!row.contains(document.activeElement)) pushed = false;
+                        } catch (_) {
+                            pushed = false;
+                        }
+                    }, 0);
+                });
+            } catch (_) {}
+
+            row.insertCell().textContent = '#';
+
+            const enabledCell = row.insertCell();
+            enabledCell.innerHTML = `<input type="checkbox" class="bracewall-enabled" ${isInitial ? '' : 'checked'}>`;
+
+            const makeNodeCell = (defaultValue) => {
+                const cell = row.insertCell();
+                const v = isInitial ? '' : String(defaultValue);
+                cell.innerHTML = `<input type="number" class="bracewall-node" min="1" step="1" value="${v}">`;
+            };
+            makeNodeCell(1);
+            makeNodeCell(1);
+            makeNodeCell(1);
+            makeNodeCell(1);
+
+            const kShearCell = row.insertCell();
+            kShearCell.innerHTML = `
+                <div style="display:flex; flex-direction:column; gap:4px; width:100%; min-width:0; box-sizing:border-box;">
+                    <div style="font-size:12px; font-weight:600; line-height:1.2;">せん断剛性 (<span class="bracewall-k-label-unit">kN/mm</span>)</div>
+                    <input type="number" class="bracewall-k-shear" min="0" step="0.001" value="${isInitial ? '' : '10'}" style="width:100%; max-width:100%; min-width:0; box-sizing:border-box;">
+                    <div style="font-size:12px; font-weight:600; line-height:1.2; margin-top:2px;">短期せん断許容耐力 (<span class="bracewall-q-allow-label-unit">kN</span>)</div>
+                    <input type="number" class="bracewall-q-allow-short" min="0" step="0.01" value="${isInitial ? '' : '0'}" style="width:100%; max-width:100%; min-width:0; box-sizing:border-box;">
+                    <label style="display:flex; align-items:flex-start; gap:6px; white-space:normal; line-height:1.2; margin:0;">
+                        <input type="checkbox" class="bracewall-per-meter" style="margin-top:2px;">
+                        <span>単位壁幅(1m)当たりの剛性で入力</span>
+                    </label>
+                    <div style="font-size:11px; color:#666; line-height:1.2;">単位: <span class="bracewall-k-unit">kN/mm</span> / <span class="bracewall-q-allow-unit">kN</span></div>
+                    <div class="bracewall-walllib-box" style="display:none; font-size:11px; color:#333; line-height:1.2;">
+                        <div style="margin:2px 0 2px;">wall.csv から選択</div>
+                        <select class="bracewall-walllib-select" style="width:100%; max-width:100%; min-width:0; box-sizing:border-box;"></select>
+                    </div>
+                    <div class="bracewall-k-converted" style="display:none; font-size:11px; color:#333; line-height:1.2;"></div>
+                    <div class="bracewall-qallow-converted" style="display:none; font-size:11px; color:#333; line-height:1.2;"></div>
+                </div>
+            `;
+
+            const kindCell = row.insertCell();
+            kindCell.innerHTML = `
+                <select class="bracewall-kind" style="width:100%;">
+                    <option value="tension">引張のみ</option>
+                    <option value="both">圧縮・引張</option>
+                </select>
+            `;
+            {
+                const sel = kindCell.querySelector('select');
+                if (sel) sel.value = kind;
+            }
+
+            const sideCell = row.insertCell();
+            sideCell.innerHTML = `
+                <div style="display:flex; flex-direction:column; gap:6px; width:100%; min-width:0;">
+                    <label style="display:flex; align-items:center; gap:6px; margin:0;">
+                        <input type="checkbox" class="bracewall-sidecolumns-enabled">
+                        <span style="font-size:12px;">側柱を使用</span>
+                    </label>
+                    <button type="button" class="bracewall-props-btn">プロパティ</button>
+                </div>
+            `;
+
+            const delCell = row.insertCell();
+            delCell.innerHTML = `<button type="button" class="delete-row-btn">×</button>`;
+
+            const updateUnits = () => {
+                const perMeter = !!row.querySelector('.bracewall-per-meter')?.checked;
+                row.querySelector('.bracewall-k-unit').textContent = perMeter ? 'kN/rad/m' : 'kN/mm';
+                row.querySelector('.bracewall-k-label-unit').textContent = perMeter ? 'kN/rad/m' : 'kN/mm';
+                row.querySelector('.bracewall-q-allow-unit').textContent = perMeter ? 'kN/m' : 'kN';
+                row.querySelector('.bracewall-q-allow-label-unit').textContent = perMeter ? 'kN/m' : 'kN';
+                const box = row.querySelector('.bracewall-walllib-box');
+                if (box) box.style.display = perMeter ? 'block' : 'none';
+            };
+
+            const updateConverted = () => {
+                const out = row.querySelector('.bracewall-k-converted');
+                const outQ = row.querySelector('.bracewall-qallow-converted');
+                if (!out || !outQ) return;
+                const perMeter = !!row.querySelector('.bracewall-per-meter')?.checked;
+                if (!perMeter) {
+                    out.style.display = 'none';
+                    out.textContent = '';
+                    outQ.style.display = 'none';
+                    outQ.textContent = '';
+                    return;
+                }
+
+                const nodeList = getNodesFromTable3D();
+                const nodeInputs = Array.from(row.querySelectorAll('input.bracewall-node'));
+                if (nodeInputs.length < 4) {
+                    out.style.display = 'block';
+                    out.textContent = '換算: -';
+                    outQ.style.display = 'block';
+                    outQ.textContent = '換算(許容): -';
+                    return;
+                }
+                const lb = parseInt(nodeInputs[0].value, 10);
+                const lt = parseInt(nodeInputs[1].value, 10);
+                const rb = parseInt(nodeInputs[2].value, 10);
+                const rt = parseInt(nodeInputs[3].value, 10);
+                const nLB = nodeList[lb - 1];
+                const nLT = nodeList[lt - 1];
+                const nRB = nodeList[rb - 1];
+                const nRT = nodeList[rt - 1];
+                if (!nLB || !nLT || !nRB || !nRT) {
+                    out.style.display = 'block';
+                    out.textContent = '換算: -';
+                    outQ.style.display = 'block';
+                    outQ.textContent = '換算(許容): -';
+                    return;
+                }
+
+                const vec = (a, b) => ({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z });
+                const len = (v) => Math.hypot(v.x, v.y, v.z);
+                const w_m = len(vec(nLB, nRB));
+                const h_mm = len(vec(nLB, nLT)) * 1000;
+
+                const k_theta_per_m = parseNumber(row.querySelector('.bracewall-k-shear')?.value, 0);
+                if (!(w_m > 0) || !(h_mm > 1e-6)) {
+                    out.style.display = 'block';
+                    out.textContent = '換算: -';
+                    outQ.style.display = 'block';
+                    outQ.textContent = '換算(許容): -';
+                    return;
+                }
+                const k_kN_per_mm = (k_theta_per_m * w_m) / h_mm;
+                out.style.display = 'block';
+                out.textContent = `換算: ${k_kN_per_mm.toFixed(3)} kN/mm (w=${w_m.toFixed(3)}m, h=${Math.round(h_mm)}mm)`;
+
+                const qPerM = parseNumber(row.querySelector('.bracewall-q-allow-short')?.value, 0);
+                const qTotal = qPerM * w_m;
+                outQ.style.display = 'block';
+                outQ.textContent = `換算(許容): ${qTotal.toFixed(2)} kN (w=${w_m.toFixed(3)}m)`;
+            };
+
+            // wall.csv選択反映（per-meter時）
+            try {
+                const wallSel = row.querySelector('.bracewall-walllib-select');
+                if (wallSel) {
+                    populateWallPresetSelect(wallSel);
+                    wallSel.addEventListener('change', () => {
+                        const perMeter = !!row.querySelector('.bracewall-per-meter')?.checked;
+                        if (!perMeter) return;
+                        const key = String(wallSel.value || '').trim();
+                        try {
+                            row.dataset.wallPresetId = key;
+                            row.dataset.wallPresetName = (wallSel.selectedOptions && wallSel.selectedOptions[0]) ? String(wallSel.selectedOptions[0].textContent || '') : '';
+                        } catch (_) {}
+                        if (!key) return;
+                        const item = wallCsvLibrary.byId.get(key);
+                        if (!item) return;
+                        const k = Number(item.k_theta_kN_per_rad_per_m);
+                        if (Number.isFinite(k)) {
+                            const input = row.querySelector('.bracewall-k-shear');
+                            if (input) {
+                                input.value = String(k);
+                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                        }
+                        const q = Number(item.q_allow_short_kN_per_m);
+                        if (Number.isFinite(q)) {
+                            const qIn = row.querySelector('.bracewall-q-allow-short');
+                            if (qIn) {
+                                qIn.value = String(q);
+                                qIn.dispatchEvent(new Event('input', { bubbles: true }));
+                                qIn.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                        }
+                        updateConverted();
+                        scheduleAutoApply();
+                    });
+                }
+            } catch (_) {}
+
+            const onChangeApply = () => {
+                updateUnits();
+                updateConverted();
+                scheduleAutoApply();
+            };
+            row.querySelector('.bracewall-enabled')?.addEventListener('change', onChangeApply);
+            row.querySelector('.bracewall-kind')?.addEventListener('change', (e) => {
+                try { row.dataset.braceWallKind = String(e.target.value || 'tension'); } catch (_) {}
+                onChangeApply();
+            });
+            row.querySelector('.bracewall-per-meter')?.addEventListener('change', onChangeApply);
+            row.querySelector('.bracewall-k-shear')?.addEventListener('input', updateConverted);
+            row.querySelector('.bracewall-k-shear')?.addEventListener('change', onChangeApply);
+            row.querySelector('.bracewall-q-allow-short')?.addEventListener('input', updateConverted);
+            row.querySelector('.bracewall-q-allow-short')?.addEventListener('change', onChangeApply);
+            row.querySelector('.bracewall-sidecolumns-enabled')?.addEventListener('change', onChangeApply);
+            Array.from(row.querySelectorAll('input.bracewall-node')).forEach((el) => {
+                el.addEventListener('input', updateConverted);
+                el.addEventListener('change', onChangeApply);
+            });
+
+            delCell.querySelector('button')?.addEventListener('click', () => {
+                try { pushState(); } catch (_) {}
+                if (!confirm('この耐力壁設定行を削除しますか？')) return;
+                try {
+                    const id = row.dataset.braceWallId;
+                    if (id) {
+                        Array.from(elements.springElementsTable.rows).forEach(r => {
+                            if (r?.dataset?.braceWallId === id) r.remove();
+                        });
+                    }
+                } catch (_) {}
+                row.remove();
+                renumberBraceWallTable();
+                scheduleAutoApply();
+            });
+
+            row.querySelector('.bracewall-props-btn')?.addEventListener('click', () => {
+                if (window.__shearWalls && typeof window.__shearWalls.openBraceWallPropsPopup === 'function') {
+                    window.__shearWalls.openBraceWallPropsPopup(braceWallId);
+                }
+            });
+
+            row.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                if (window.__shearWalls && typeof window.__shearWalls.openBraceWallPropsPopup === 'function') {
+                    window.__shearWalls.openBraceWallPropsPopup(braceWallId);
+                }
+            });
+
+            updateUnits();
+            updateConverted();
+            renumberBraceWallTable();
+            return row;
+        };
+
+        // --- props popup ---
+        let currentBraceWallRow = null;
+
+        const decodeBraceSectionProps = (raw) => {
+            if (!raw) return null;
+            try { return JSON.parse(decodeURIComponent(raw)); } catch (_) {}
+            try { return JSON.parse(raw); } catch (_) {}
+            return null;
+        };
+
+        const formatBraceSectionLabel = (props) => {
+            if (!props) return '-';
+            const sectionName = props?.sectionName || props?.sectionLabel || '';
+            const axis = props?.selectedAxis || props?.sectionAxisLabel || (props?.sectionAxis ? props.sectionAxis.label : '') || '';
+            return sectionName ? `${sectionName}${axis ? ' / ' + axis : ''}` : '-';
+        };
+
+        const updateBraceWallPopupSideLabels = (row) => {
+            if (!row) return;
+            try {
+                if (elements.bwPropsLeftSectionLabel) {
+                    const props = decodeBraceSectionProps(row?.dataset?.bracewallLeftSectionProps);
+                    elements.bwPropsLeftSectionLabel.textContent = formatBraceSectionLabel(props);
+                }
+                if (elements.bwPropsRightSectionLabel) {
+                    const props = decodeBraceSectionProps(row?.dataset?.bracewallRightSectionProps);
+                    elements.bwPropsRightSectionLabel.textContent = formatBraceSectionLabel(props);
+                }
+            } catch (e) {
+                console.warn('updateBraceWallPopupSideLabels failed', e);
+            }
+        };
+
+        const openSteelSelectorForBraceWallSide = (braceWallId, side) => {
+            try {
+                if (!elements.braceWallsTable) return;
+                const idStr = String(braceWallId);
+                const row = Array.from(elements.braceWallsTable.rows).find(r => r?.dataset?.braceWallId === idStr) || null;
+                if (!row) return;
+
+                const targetId = `${idStr}:${String(side)}`;
+                const url = `steel_selector.html?targetMember=${encodeURIComponent(targetId)}`;
+                const popup = window.open(url, 'SteelSelector', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+                if (!popup) {
+                    alert('ポップアップブロッカーにより断面選択ツールを開けませんでした。ポップアップを許可してください。');
+                    return;
+                }
+
+                const checkPopup = setInterval(() => {
+                    if (!popup.closed) return;
+                    clearInterval(checkPopup);
+                    const storedData = localStorage.getItem('steelSelectionForFrameAnalyzer');
+                    if (!storedData) return;
+                    try {
+                        const data = JSON.parse(storedData);
+                        if (data && data.targetMemberIndex === targetId && data.properties) {
+                            const encoded = encodeURIComponent(JSON.stringify(data.properties));
+                            if (side === 'left') row.dataset.bracewallLeftSectionProps = encoded;
+                            else row.dataset.bracewallRightSectionProps = encoded;
+                            updateBraceWallPopupSideLabels(row);
+                            localStorage.removeItem('steelSelectionForFrameAnalyzer');
+                            scheduleAutoApply();
+                        }
+                    } catch (_) {}
+                }, 400);
+            } catch (e) {
+                console.warn('openSteelSelectorForBraceWallSide failed', e);
+            }
+        };
+
+        const openBraceWallPropsPopup = (braceWallId) => {
+            if (!elements.braceWallPropsPopup) return;
+            const row = Array.from(elements.braceWallsTable.rows).find(r => r?.dataset?.braceWallId === String(braceWallId));
+            if (!row) return;
+            currentBraceWallRow = row;
+            if (elements.bwPropsId) elements.bwPropsId.textContent = String(braceWallId);
+
+            const getRowInput = (sel, fallback = '') => row.querySelector(sel)?.value ?? fallback;
+            const getRowChecked = (sel) => !!row.querySelector(sel)?.checked;
+
+            if (elements.bwPropsEnabled) elements.bwPropsEnabled.checked = getRowChecked('.bracewall-enabled');
+
+            const nodeInputs = Array.from(row.querySelectorAll('input.bracewall-node'));
+            if (elements.bwPropsLb) elements.bwPropsLb.value = nodeInputs[0]?.value || '';
+            if (elements.bwPropsLt) elements.bwPropsLt.value = nodeInputs[1]?.value || '';
+            if (elements.bwPropsRb) elements.bwPropsRb.value = nodeInputs[2]?.value || '';
+            if (elements.bwPropsRt) elements.bwPropsRt.value = nodeInputs[3]?.value || '';
+
+            const kind = row.querySelector('.bracewall-kind')?.value || row.dataset.braceWallKind || 'tension';
+            if (elements.bwPropsKind) elements.bwPropsKind.value = kind;
+
+            const perMeter = getRowChecked('.bracewall-per-meter');
+            if (elements.bwPropsPerMeter) elements.bwPropsPerMeter.checked = perMeter;
+            if (elements.bwPropsKShear) elements.bwPropsKShear.value = getRowInput('.bracewall-k-shear', '');
+            if (elements.bwPropsQAllowShort) elements.bwPropsQAllowShort.value = getRowInput('.bracewall-q-allow-short', '');
+
+            // wall preset
+            if (elements.bwPropsWallPreset) {
+                populateWallPresetSelect(elements.bwPropsWallPreset);
+                const id = row.dataset.wallPresetId || '';
+                elements.bwPropsWallPreset.value = id;
+            }
+
+            const sideEnabled = getRowChecked('.bracewall-sidecolumns-enabled');
+            if (elements.bwPropsSideColumnsEnabled) elements.bwPropsSideColumnsEnabled.checked = sideEnabled;
+            if (elements.bwPropsSideColumnsBox) elements.bwPropsSideColumnsBox.style.display = sideEnabled ? 'block' : 'none';
+
+            // 側柱の断面選択（2D同様のUI）
+            updateBraceWallPopupSideLabels(row);
+            if (elements.bwPropsLeftSectionBtn) {
+                elements.bwPropsLeftSectionBtn.onclick = () => openSteelSelectorForBraceWallSide(braceWallId, 'left');
+            }
+            if (elements.bwPropsRightSectionBtn) {
+                elements.bwPropsRightSectionBtn.onclick = () => openSteelSelectorForBraceWallSide(braceWallId, 'right');
+            }
+
+            // offsets / corner / allow / joint presets are stored in dataset (future use)
+            if (elements.bwPropsOffsetBottomMm) elements.bwPropsOffsetBottomMm.value = row.dataset.bracewallOffsetBottomMm || '';
+            if (elements.bwPropsOffsetTopMm) elements.bwPropsOffsetTopMm.value = row.dataset.bracewallOffsetTopMm || '';
+
+            // joint preset selects
+            [
+                elements.bwPropsJointPresetLb,
+                elements.bwPropsJointPresetLt,
+                elements.bwPropsJointPresetRb,
+                elements.bwPropsJointPresetRt
+            ].forEach((sel) => {
+                if (!sel) return;
+                populateJointPresetSelect(sel);
+            });
+            if (elements.bwPropsJointPresetLb) elements.bwPropsJointPresetLb.value = row.dataset.bracewallJointPresetLb || '';
+            if (elements.bwPropsJointPresetLt) elements.bwPropsJointPresetLt.value = row.dataset.bracewallJointPresetLt || '';
+            if (elements.bwPropsJointPresetRb) elements.bwPropsJointPresetRb.value = row.dataset.bracewallJointPresetRb || '';
+            if (elements.bwPropsJointPresetRt) elements.bwPropsJointPresetRt.value = row.dataset.bracewallJointPresetRt || '';
+
+            const setNum = (el, v) => { if (el) el.value = (v === undefined || v === null) ? '' : String(v); };
+            const setChk = (el, v) => { if (el) el.checked = !!v; };
+            setNum(elements.bwPropsCornerKxTLb, row.dataset.bracewallCornerKxTLb || '');
+            setNum(elements.bwPropsCornerKxCLb, row.dataset.bracewallCornerKxCLb || '');
+            setChk(elements.bwPropsCornerRigidLb, row.dataset.bracewallCornerRigidLb === '1');
+            setNum(elements.bwPropsCornerKxTLt, row.dataset.bracewallCornerKxTLt || '');
+            setNum(elements.bwPropsCornerKxCLt, row.dataset.bracewallCornerKxCLt || '');
+            setChk(elements.bwPropsCornerRigidLt, row.dataset.bracewallCornerRigidLt === '1');
+            setNum(elements.bwPropsCornerKxTRb, row.dataset.bracewallCornerKxTRb || '');
+            setNum(elements.bwPropsCornerKxCRb, row.dataset.bracewallCornerKxCRb || '');
+            setChk(elements.bwPropsCornerRigidRb, row.dataset.bracewallCornerRigidRb === '1');
+            setNum(elements.bwPropsCornerKxTRt, row.dataset.bracewallCornerKxTRt || '');
+            setNum(elements.bwPropsCornerKxCRt, row.dataset.bracewallCornerKxCRt || '');
+            setChk(elements.bwPropsCornerRigidRt, row.dataset.bracewallCornerRigidRt === '1');
+
+            setNum(elements.bwPropsCornerAllowTLb, row.dataset.bracewallCornerAllowTLb || '');
+            setNum(elements.bwPropsCornerAllowCLb, row.dataset.bracewallCornerAllowCLb || '');
+            setNum(elements.bwPropsCornerAllowTLt, row.dataset.bracewallCornerAllowTLt || '');
+            setNum(elements.bwPropsCornerAllowCLt, row.dataset.bracewallCornerAllowCLt || '');
+            setNum(elements.bwPropsCornerAllowTRb, row.dataset.bracewallCornerAllowTRb || '');
+            setNum(elements.bwPropsCornerAllowCRb, row.dataset.bracewallCornerAllowCRb || '');
+            setNum(elements.bwPropsCornerAllowTRt, row.dataset.bracewallCornerAllowTRt || '');
+            setNum(elements.bwPropsCornerAllowCRt, row.dataset.bracewallCornerAllowCRt || '');
+
+            // unit labels
+            if (elements.bwPropsKUnit) elements.bwPropsKUnit.textContent = perMeter ? 'kN/rad/m' : 'kN/mm';
+            if (elements.bwPropsQAllowUnit) elements.bwPropsQAllowUnit.textContent = perMeter ? 'kN/m' : 'kN';
+            if (elements.bwPropsWallLibBox) elements.bwPropsWallLibBox.style.display = perMeter ? 'block' : 'none';
+
+            setCenteredPopupVisible(elements.braceWallPropsPopup, true);
+        };
+
+        const applyBraceWallPropsPopupToRow = () => {
+            if (!currentBraceWallRow) return;
+            const row = currentBraceWallRow;
+
+            const setRowInput = (sel, v) => {
+                const el = row.querySelector(sel);
+                if (el) {
+                    el.value = (v === undefined || v === null) ? '' : String(v);
+                    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+                    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+                }
+            };
+            const setRowChecked = (sel, checked) => {
+                const el = row.querySelector(sel);
+                if (el) {
+                    el.checked = !!checked;
+                    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+                }
+            };
+
+            setRowChecked('.bracewall-enabled', !!elements.bwPropsEnabled?.checked);
+            const nodeVals = [elements.bwPropsLb, elements.bwPropsLt, elements.bwPropsRb, elements.bwPropsRt].map(el => el ? el.value : '');
+            const nodeEls = Array.from(row.querySelectorAll('input.bracewall-node'));
+            for (let i = 0; i < 4 && i < nodeEls.length; i++) {
+                nodeEls[i].value = nodeVals[i] || '';
+                try { nodeEls[i].dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+                try { nodeEls[i].dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+            }
+
+            const kind = elements.bwPropsKind ? String(elements.bwPropsKind.value || 'tension') : 'tension';
+            setRowInput('.bracewall-kind', kind);
+            try { row.dataset.braceWallKind = kind; } catch (_) {}
+
+            const perMeter = !!elements.bwPropsPerMeter?.checked;
+            setRowChecked('.bracewall-per-meter', perMeter);
+            setRowInput('.bracewall-k-shear', elements.bwPropsKShear?.value ?? '');
+            setRowInput('.bracewall-q-allow-short', elements.bwPropsQAllowShort?.value ?? '');
+
+            // wall preset
+            try {
+                const presetId = elements.bwPropsWallPreset ? String(elements.bwPropsWallPreset.value || '') : '';
+                row.dataset.wallPresetId = presetId;
+                row.dataset.wallPresetName = presetId ? String(elements.bwPropsWallPreset.selectedOptions?.[0]?.textContent || '') : '';
+                const wallSel = row.querySelector('.bracewall-walllib-select');
+                if (wallSel) {
+                    populateWallPresetSelect(wallSel);
+                    wallSel.value = presetId;
+                }
+            } catch (_) {}
+
+            const sideEnabled = !!elements.bwPropsSideColumnsEnabled?.checked;
+            setRowChecked('.bracewall-sidecolumns-enabled', sideEnabled);
+
+            // dataset保存（側柱/接合は将来の生成に使用）
+            try {
+                row.dataset.bracewallOffsetBottomMm = String(elements.bwPropsOffsetBottomMm?.value || '');
+                row.dataset.bracewallOffsetTopMm = String(elements.bwPropsOffsetTopMm?.value || '');
+                row.dataset.bracewallJointPresetLb = String(elements.bwPropsJointPresetLb?.value || '');
+                row.dataset.bracewallJointPresetLt = String(elements.bwPropsJointPresetLt?.value || '');
+                row.dataset.bracewallJointPresetRb = String(elements.bwPropsJointPresetRb?.value || '');
+                row.dataset.bracewallJointPresetRt = String(elements.bwPropsJointPresetRt?.value || '');
+
+                row.dataset.bracewallCornerKxTLb = String(elements.bwPropsCornerKxTLb?.value || '');
+                row.dataset.bracewallCornerKxCLb = String(elements.bwPropsCornerKxCLb?.value || '');
+                row.dataset.bracewallCornerRigidLb = (elements.bwPropsCornerRigidLb?.checked ? '1' : '0');
+                row.dataset.bracewallCornerKxTLt = String(elements.bwPropsCornerKxTLt?.value || '');
+                row.dataset.bracewallCornerKxCLt = String(elements.bwPropsCornerKxCLt?.value || '');
+                row.dataset.bracewallCornerRigidLt = (elements.bwPropsCornerRigidLt?.checked ? '1' : '0');
+                row.dataset.bracewallCornerKxTRb = String(elements.bwPropsCornerKxTRb?.value || '');
+                row.dataset.bracewallCornerKxCRb = String(elements.bwPropsCornerKxCRb?.value || '');
+                row.dataset.bracewallCornerRigidRb = (elements.bwPropsCornerRigidRb?.checked ? '1' : '0');
+                row.dataset.bracewallCornerKxTRt = String(elements.bwPropsCornerKxTRt?.value || '');
+                row.dataset.bracewallCornerKxCRt = String(elements.bwPropsCornerKxCRt?.value || '');
+                row.dataset.bracewallCornerRigidRt = (elements.bwPropsCornerRigidRt?.checked ? '1' : '0');
+
+                row.dataset.bracewallCornerAllowTLb = String(elements.bwPropsCornerAllowTLb?.value || '');
+                row.dataset.bracewallCornerAllowCLb = String(elements.bwPropsCornerAllowCLb?.value || '');
+                row.dataset.bracewallCornerAllowTLt = String(elements.bwPropsCornerAllowTLt?.value || '');
+                row.dataset.bracewallCornerAllowCLt = String(elements.bwPropsCornerAllowCLt?.value || '');
+                row.dataset.bracewallCornerAllowTRb = String(elements.bwPropsCornerAllowTRb?.value || '');
+                row.dataset.bracewallCornerAllowCRb = String(elements.bwPropsCornerAllowCRb?.value || '');
+                row.dataset.bracewallCornerAllowTRt = String(elements.bwPropsCornerAllowTRt?.value || '');
+                row.dataset.bracewallCornerAllowCRt = String(elements.bwPropsCornerAllowCRt?.value || '');
+            } catch (_) {}
+
+            scheduleAutoApply();
+        };
+
+        // --- apply brace walls -> generate diagonal springs ---
+        const applyBraceWallsToModel = ({ silent = false } = {}) => {
+            const nodeList = getNodesFromTable3D();
+            const nodeById = (id) => nodeList[id - 1] || null;
+            const vec = (a, b) => ({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z });
+            const len = (v) => Math.hypot(v.x, v.y, v.z);
+
+            const removeExisting = (braceWallId) => {
+                try {
+                    Array.from(elements.springElementsTable.rows).forEach(r => {
+                        if (r?.dataset?.braceWallId === braceWallId) r.remove();
+                    });
+                } catch (_) {}
+            };
+
+            const addDiagonalSpring = ({ iNode, jNode, kxT_m, kxC_m, braceWallId, role }) => {
+                const kxT_ui = (Number(kxT_m) || 0) / 1000;
+                const kxC_ui = (Number(kxC_m) || 0) / 1000;
+                const ky_ui = 0;
+                const newRow = addRow(elements.springElementsTable, [
+                    '#',
+                    `<input type="number" value="${iNode}" min="1" step="1">`,
+                    `<input type="number" value="${jNode}" min="1" step="1">`,
+                    `<div style="display:flex; align-items:center; gap:8px;">
+                        <input type="number" value="${kxT_ui}" step="0.01" style="flex:1; min-width:0;">
+                        <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                            <input type="checkbox">剛
+                        </label>
+                    </div>`,
+                    `<div style="display:flex; align-items:center; gap:8px;">
+                        <input type="number" value="${kxC_ui}" step="0.01" style="flex:1; min-width:0;">
+                        <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                            <input type="checkbox">剛
+                        </label>
+                    </div>`,
+                    `<div style="display:flex; align-items:center; gap:8px;">
+                        <input type="number" value="${ky_ui}" step="0.01" style="flex:1; min-width:0;">
+                        <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                            <input type="checkbox">剛
+                        </label>
+                    </div>`
+                ], false);
+                if (newRow) {
+                    try {
+                        newRow.dataset.braceWallId = String(braceWallId);
+                        newRow.dataset.braceWallRole = String(role || 'brace-diagonal');
+                    } catch (_) {}
+                }
+                return newRow;
+            };
+
+            const rows = Array.from(elements.braceWallsTable.rows);
+            for (const row of rows) {
+                const braceWallId = row.dataset.braceWallId;
+                if (!braceWallId) continue;
+                const enabled = !!row.querySelector('.bracewall-enabled')?.checked;
+                if (!enabled) {
+                    removeExisting(braceWallId);
+                    continue;
+                }
+
+                const nodeInputs = Array.from(row.querySelectorAll('input.bracewall-node'));
+                if (nodeInputs.length < 4) continue;
+                const lb = parseInt(nodeInputs[0].value, 10);
+                const lt = parseInt(nodeInputs[1].value, 10);
+                const rb = parseInt(nodeInputs[2].value, 10);
+                const rt = parseInt(nodeInputs[3].value, 10);
+
+                const nLB = nodeById(lb);
+                const nLT = nodeById(lt);
+                const nRB = nodeById(rb);
+                const nRT = nodeById(rt);
+                if (!nLB || !nLT || !nRB || !nRT) {
+                    if (!silent) warnOrAlert(`ブレース置換(${braceWallId}): 指定した節点番号が無効です。`);
+                    continue;
+                }
+
+                const b = len(vec(nLB, nRB));
+                const h = len(vec(nLB, nLT));
+                const Ld1 = len(vec(nLB, nRT));
+                const Ld2 = len(vec(nRB, nLT));
+                const Ld = (Ld1 + Ld2) / 2;
+                if (!(b > 1e-9) || !(h > 1e-9) || !(Ld > 1e-9)) {
+                    if (!silent) warnOrAlert(`ブレース置換(${braceWallId}): 幾何が不正です。`);
+                    continue;
+                }
+
+                removeExisting(braceWallId);
+
+                const perMeter = !!row.querySelector('.bracewall-per-meter')?.checked;
+                const rawK = parseNumber(row.querySelector('.bracewall-k-shear')?.value, 0);
+                let kShear_ui_kN_per_mm = rawK;
+                if (perMeter) {
+                    const h_mm = h * 1000;
+                    kShear_ui_kN_per_mm = (rawK * b) / h_mm;
+                }
+                const kShear = kShear_ui_kN_per_mm * 1000; // kN/m
+
+                const kind = (row.querySelector('.bracewall-kind')?.value || row.dataset.braceWallKind || 'tension');
+                const isBoth = kind === 'both';
+                if (!(kShear > 0)) continue;
+
+                const factor = isBoth ? 2 : 1;
+                const EA_needed = (kShear * Math.pow(Ld, 3)) / (factor * b * b); // kN
+                const KxDiag = EA_needed / Ld; // kN/m
+                const kxT = Math.max(0, KxDiag);
+                const kxC = isBoth ? Math.max(0, KxDiag) : 0;
+
+                addDiagonalSpring({ iNode: lb, jNode: rt, kxT_m: kxT, kxC_m: kxC, braceWallId, role: 'brace-diag-1' });
+                addDiagonalSpring({ iNode: rb, jNode: lt, kxT_m: kxT, kxC_m: kxC, braceWallId, role: 'brace-diag-2' });
+            }
+
+            try {
+                if (typeof window.renumberTables === 'function') window.renumberTables();
+            } catch (_) {}
+            try {
+                panZoomState.isInitialized = false;
+            } catch (_) {}
+            if (typeof drawOnCanvas === 'function') drawOnCanvas();
+            if (typeof sendModelToViewer === 'function') {
+                setTimeout(() => {
+                    try { sendModelToViewer(); } catch (_) {}
+                }, 100);
+            }
+        };
+
+        // --- file inputs ---
+        try {
+            if (elements.wallCsvFileInput) {
+                elements.wallCsvFileInput.addEventListener('change', (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        try {
+                            loadWallCsvText(ev.target.result);
+                            // 既存のselect類を更新
+                            document.querySelectorAll('select.bracewall-walllib-select').forEach(sel => populateWallPresetSelect(sel));
+                            if (elements.bwPropsWallPreset) populateWallPresetSelect(elements.bwPropsWallPreset);
+                        } catch (err) {
+                            alert('wall.csv の読み込みに失敗しました: ' + err.message);
+                        }
+                    };
+                    reader.readAsText(file);
+                });
+            }
+            if (elements.jointCsvFileInput) {
+                elements.jointCsvFileInput.addEventListener('change', (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        try {
+                            loadJointCsvText(ev.target.result);
+                            // popup側のselect更新
+                            [
+                                elements.bwPropsJointPresetLb,
+                                elements.bwPropsJointPresetLt,
+                                elements.bwPropsJointPresetRb,
+                                elements.bwPropsJointPresetRt
+                            ].forEach((sel) => {
+                                if (!sel) return;
+                                populateJointPresetSelect(sel);
+                            });
+                        } catch (err) {
+                            alert('joint.csv の読み込みに失敗しました: ' + err.message);
+                        }
+                    };
+                    reader.readAsText(file);
+                });
+            }
+        } catch (_) {}
+
+        // 起動時: 同梱CSVを自動読込（ユーザーがファイル選択していれば上書きしない）
+        try {
+            const loadWallCsvFromUrl = async (url) => {
+                try {
+                    if (wallCsvLibrary.items && wallCsvLibrary.items.length > 0) return;
+                    const res = await fetch(url, { cache: 'no-store' });
+                    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                    const text = await res.text();
+                    loadWallCsvText(text);
+                    document.querySelectorAll('select.bracewall-walllib-select').forEach(sel => populateWallPresetSelect(sel));
+                    if (elements.bwPropsWallPreset) populateWallPresetSelect(elements.bwPropsWallPreset);
+                } catch (e) {
+                    console.warn('loadWallCsvFromUrl failed', e);
+                }
+            };
+
+            const loadJointCsvFromUrl = async (url) => {
+                try {
+                    if (jointCsvLibrary.items && jointCsvLibrary.items.length > 0) return;
+                    const res = await fetch(url, { cache: 'no-store' });
+                    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                    const text = await res.text();
+                    loadJointCsvText(text);
+                    [
+                        elements.bwPropsJointPresetLb,
+                        elements.bwPropsJointPresetLt,
+                        elements.bwPropsJointPresetRb,
+                        elements.bwPropsJointPresetRt
+                    ].forEach((sel) => {
+                        if (!sel) return;
+                        populateJointPresetSelect(sel);
+                    });
+                } catch (e) {
+                    console.warn('loadJointCsvFromUrl failed', e);
+                }
+            };
+
+            const tryLoadFirst = async (loadFn, urls) => {
+                for (const url of urls) {
+                    try {
+                        const beforeCount = (loadFn === loadWallCsvFromUrl)
+                            ? (wallCsvLibrary.items?.length || 0)
+                            : (jointCsvLibrary.items?.length || 0);
+                        await loadFn(url);
+                        const afterCount = (loadFn === loadWallCsvFromUrl)
+                            ? (wallCsvLibrary.items?.length || 0)
+                            : (jointCsvLibrary.items?.length || 0);
+                        if (afterCount > beforeCount) return;
+                        if (afterCount > 0) return;
+                    } catch (_) {}
+                }
+            };
+
+            // 3D統合版(index.html)から見て同階層が基本だが、サーバ構成により ../ になる場合もあるため複数候補を試す
+            tryLoadFirst(loadWallCsvFromUrl, ['wall.csv', './wall.csv', '../wall.csv']);
+            tryLoadFirst(loadJointCsvFromUrl, ['joint.csv', './joint.csv', '../joint.csv']);
+        } catch (e) {
+            console.warn('wall/joint csv init failed', e);
+        }
+
+        // --- add flow popups ---
+        const closePopup = (popup) => {
+            try { setCenteredPopupVisible(popup, false); } catch (_) {
+                if (popup) popup.style.display = 'none';
+            }
+        };
+
+        const beginAddWallFlow = (target = 'table') => {
+            try {
+                pendingAddShearWallFlowTarget = target;
+                pendingAddShearWallType = null;
+                pendingBraceWallKind = null;
+            } catch (_) {}
+
+            // 現状は「壁エレメント置換」をUIから隠しているため、
+            // 「耐力壁追加」→直接「ブレース置換の種別」へ遷移する。
+            const wallChoiceBtn = document.getElementById('sw-add-type-wall');
+            const isWallChoiceVisible = !!(wallChoiceBtn && wallChoiceBtn.getClientRects && wallChoiceBtn.getClientRects().length > 0);
+            if (!isWallChoiceVisible && elements.braceWallAddKindPopup) {
+                try { pendingAddShearWallType = 'brace'; } catch (_) {}
+                setCenteredPopupVisible(elements.braceWallAddKindPopup, true);
+                return;
+            }
+
+            if (elements.shearWallAddTypePopup) {
+                setCenteredPopupVisible(elements.shearWallAddTypePopup, true);
+            } else if (elements.braceWallAddKindPopup) {
+                setCenteredPopupVisible(elements.braceWallAddKindPopup, true);
+            } else {
+                try { pushState(); } catch (_) {}
+                addBraceWallRow({ kind: 'tension' });
+                scheduleAutoApply();
+            }
+        };
+
+        try {
+            elements.addShearWallBtn?.addEventListener('click', () => beginAddWallFlow('table'));
+            elements.modeAddShearWallBtn?.addEventListener('click', () => beginAddWallFlow('canvas'));
+
+            elements.swAddTypeCloseBtn?.addEventListener('click', () => {
+                closePopup(elements.shearWallAddTypePopup);
+                pendingAddShearWallType = null;
+                pendingBraceWallKind = null;
+                pendingAddShearWallFlowTarget = 'table';
+            });
+            elements.bwAddKindCloseBtn?.addEventListener('click', () => {
+                closePopup(elements.braceWallAddKindPopup);
+                pendingAddShearWallType = null;
+                pendingBraceWallKind = null;
+                pendingAddShearWallFlowTarget = 'table';
+            });
+
+            elements.swAddTypeBraceBtn?.addEventListener('click', () => {
+                closePopup(elements.shearWallAddTypePopup);
+                try { pendingAddShearWallType = 'brace'; } catch (_) {}
+                setCenteredPopupVisible(elements.braceWallAddKindPopup, true);
+            });
+
+            elements.bwAddKindTensionBtn?.addEventListener('click', () => {
+                closePopup(elements.braceWallAddKindPopup);
+                if (pendingAddShearWallFlowTarget === 'canvas') {
+                    pendingAddShearWallType = 'brace';
+                    pendingBraceWallKind = 'tension';
+                    setCanvasMode('addShearWall');
+                } else {
+                    try { pushState(); } catch (_) {}
+                    addBraceWallRow({ kind: 'tension' });
+                    scheduleAutoApply();
+                }
+            });
+            elements.bwAddKindBothBtn?.addEventListener('click', () => {
+                closePopup(elements.braceWallAddKindPopup);
+                if (pendingAddShearWallFlowTarget === 'canvas') {
+                    pendingAddShearWallType = 'brace';
+                    pendingBraceWallKind = 'both';
+                    setCanvasMode('addShearWall');
+                } else {
+                    try { pushState(); } catch (_) {}
+                    addBraceWallRow({ kind: 'both' });
+                    scheduleAutoApply();
+                }
+            });
+        } catch (_) {}
+
+        // props popup events
+        try {
+            elements.bwPropsCloseBtn?.addEventListener('click', () => closePopup(elements.braceWallPropsPopup));
+            elements.bwPropsApplyBtn?.addEventListener('click', () => {
+                try { pushState(); } catch (_) {}
+                applyBraceWallPropsPopupToRow();
+                closePopup(elements.braceWallPropsPopup);
+            });
+            elements.bwPropsSideColumnsEnabled?.addEventListener('change', () => {
+                if (elements.bwPropsSideColumnsBox) elements.bwPropsSideColumnsBox.style.display = elements.bwPropsSideColumnsEnabled.checked ? 'block' : 'none';
+            });
+            elements.bwPropsPerMeter?.addEventListener('change', () => {
+                const perMeter = !!elements.bwPropsPerMeter.checked;
+                if (elements.bwPropsKUnit) elements.bwPropsKUnit.textContent = perMeter ? 'kN/rad/m' : 'kN/mm';
+                if (elements.bwPropsQAllowUnit) elements.bwPropsQAllowUnit.textContent = perMeter ? 'kN/m' : 'kN';
+                if (elements.bwPropsWallLibBox) elements.bwPropsWallLibBox.style.display = perMeter ? 'block' : 'none';
+            });
+            elements.bwPropsWallPreset?.addEventListener('change', () => {
+                const perMeter = !!elements.bwPropsPerMeter?.checked;
+                if (!perMeter) return;
+                const key = String(elements.bwPropsWallPreset.value || '').trim();
+                const item = wallCsvLibrary.byId.get(key);
+                if (!item) return;
+                const k = Number(item.k_theta_kN_per_rad_per_m);
+                if (elements.bwPropsKShear && Number.isFinite(k)) elements.bwPropsKShear.value = String(k);
+                const q = Number(item.q_allow_short_kN_per_m);
+                if (elements.bwPropsQAllowShort && Number.isFinite(q)) elements.bwPropsQAllowShort.value = String(q);
+            });
+        } catch (_) {}
+
+        // API公開
+        window.__shearWalls = window.__shearWalls || {};
+        window.__shearWalls.__initialized3D = true;
+        window.__shearWalls.addBraceWallRow = addBraceWallRow;
+        window.__shearWalls.addBraceWallRowWithNodes = ({ lb, lt, rb, rt, kind } = {}) => {
+            const row = addBraceWallRow({ kind: (kind === 'both' ? 'both' : 'tension') });
+            try {
+                const ins = Array.from(row.querySelectorAll('input.bracewall-node'));
+                if (ins.length >= 4) {
+                    if (lb) ins[0].value = String(lb);
+                    if (lt) ins[1].value = String(lt);
+                    if (rb) ins[2].value = String(rb);
+                    if (rt) ins[3].value = String(rt);
+                }
+                const kindSel = row.querySelector('select.bracewall-kind');
+                if (kindSel && kind) kindSel.value = (kind === 'both') ? 'both' : 'tension';
+            } catch (_) {}
+            return row;
+        };
+        window.__shearWalls.applyBraceWallsToModel = applyBraceWallsToModel;
+        window.__shearWalls.openBraceWallPropsPopup = openBraceWallPropsPopup;
+        window.__shearWalls.openBraceWallRow = (braceWallId) => {
+            const row = Array.from(elements.braceWallsTable.rows).find(r => r?.dataset?.braceWallId === String(braceWallId));
+            if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        };
+        window.__shearWalls.__setNextBraceWallId = (n) => { nextBraceWallId = Math.max(1, Number(n) || 1); };
+        window.__shearWalls.__loadWallCsvText = loadWallCsvText;
+        window.__shearWalls.__loadJointCsvText = loadJointCsvText;
+    };
+
+    try {
+        initializeShearWallsFeature3D();
+    } catch (e) {
+        console.warn('initializeShearWallsFeature3D failed', e);
+    }
     
     const saveInputData = () => {
         try {
@@ -18110,7 +20616,30 @@ const loadPreset = (index) => {
             const csvSections = [];
 
             // 2D/3Dどちらの保存データかを判別できるようにメタ情報を付与
-            csvSections.push('#META\nkey,value\nmode,3d\n');
+            // 主要な表示/解析設定もここに保存する（2D側は未知キーを無視できる）
+            const considerSelfWeight = (document.getElementById('consider-self-weight-checkbox')?.checked) ? '1' : '0';
+            const showSpringStiffnessEl = document.getElementById('show-spring-stiffness');
+            const showSpringStiffness = showSpringStiffnessEl ? (showSpringStiffnessEl.checked ? '1' : '0') : '1';
+            const showBraceNamesEl = document.getElementById('show-brace-names');
+            const showBraceNames = showBraceNamesEl ? (showBraceNamesEl.checked ? '1' : '0') : '1';
+            const showMemberDimensionsEl = document.getElementById('show-member-dimensions');
+            const showMemberDimensions = showMemberDimensionsEl ? (showMemberDimensionsEl.checked ? '1' : '0') : '1';
+            const showExternalLoadsEl = document.getElementById('show-external-loads');
+            const showExternalLoads = showExternalLoadsEl ? (showExternalLoadsEl.checked ? '1' : '0') : '1';
+            const showSelfWeightEl = document.getElementById('show-self-weight');
+            const showSelfWeight = showSelfWeightEl ? (showSelfWeightEl.checked ? '1' : '0') : '1';
+
+            csvSections.push(
+                '#META\n'
+                + 'key,value\n'
+                + 'mode,3d\n'
+                + `considerSelfWeight,${considerSelfWeight}\n`
+                + `showSpringStiffness,${showSpringStiffness}\n`
+                + `showBraceNames,${showBraceNames}\n`
+                + `showMemberDimensions,${showMemberDimensions}\n`
+                + `showExternalLoads,${showExternalLoads}\n`
+                + `showSelfWeight,${showSelfWeight}\n`
+            );
             if (state.nodes.length > 0) {
                 const header = 'x,y,z,support,dx_forced,dy_forced,dz_forced';
                 const rows = state.nodes.map(n => [
@@ -18125,7 +20654,7 @@ const loadPreset = (index) => {
                 csvSections.push('#NODES\n' + header + '\n' + rows.join('\n'));
             }
             if (state.members.length > 0) {
-                const header = 'i,j,E,strengthType,strengthValue,Iz,Iy,J,A,Zz,Zy,I,Z,i_conn,j_conn,bucklingK,Kx_i,Ky_i,Kr_i,Kx_j,Ky_j,Kr_j,Zx,ix,iy,sectionLabel,sectionSummary,sectionSource,sectionInfo,sectionAxisKey,sectionAxisMode,sectionAxisLabel';
+                const header = 'i,j,E,strengthType,strengthValue,Iz,Iz_factor,Iy,Iy_factor,J,J_factor,Iw,Iw_factor,A,A_factor,Zz,Zz_factor,Zy,Zy_factor,I,Z,i_conn,j_conn,bucklingK,Kx_i,Ky_i,Kr_i,Kx_j,Ky_j,Kr_j,Zx,ix,iy,sectionLabel,sectionSummary,sectionSource,sectionInfo,sectionAxisKey,sectionAxisMode,sectionAxisLabel';
                 const rows = state.members.map(m => {
                     const sectionLabel = encodeIfNeeded(m.sectionLabel || (m.sectionInfo && m.sectionInfo.label));
                     const sectionSummary = encodeIfNeeded(m.sectionSummary || (m.sectionInfo && m.sectionInfo.dimensionSummary));
@@ -18152,11 +20681,19 @@ const loadPreset = (index) => {
                         toCsvValue(m.strengthType),
                         toCsvValue(m.strengthValue),
                         toCsvValue(m.Iz ?? m.I),
+                        toCsvValue(m.Iz_factor),
                         toCsvValue(m.Iy),
+                        toCsvValue(m.Iy_factor),
                         toCsvValue(m.J),
+                        toCsvValue(m.J_factor),
+                        toCsvValue(m.Iw),
+                        toCsvValue(m.Iw_factor),
                         toCsvValue(m.A),
+                        toCsvValue(m.A_factor),
                         toCsvValue(m.Zz ?? m.Z),
+                        toCsvValue(m.Zz_factor),
                         toCsvValue(m.Zy),
+                        toCsvValue(m.Zy_factor),
                         toCsvValue(m.I !== undefined ? m.I : (m.Iz ?? '')),
                         toCsvValue(m.Z !== undefined ? m.Z : (m.Zz ?? '')),
                         toCsvValue(m.i_conn),
@@ -18181,6 +20718,88 @@ const loadPreset = (index) => {
                     ].join(',');
                 });
                 csvSections.push('#MEMBERS\n' + header + '\n' + rows.join('\n'));
+            }
+
+            if (state.springElements && state.springElements.length > 0) {
+                const header = 'i,j,KxT,rigidT,KxC,rigidC,Ky,rigidKy,shearWallId,shearWallRole,braceWallId,braceWallRole';
+                const rows = state.springElements.map(se => [
+                    toCsvValue(se.i),
+                    toCsvValue(se.j),
+                    toCsvValue(se.KxT),
+                    toCsvValue(se.rigidT ? 1 : 0),
+                    toCsvValue(se.KxC),
+                    toCsvValue(se.rigidC ? 1 : 0),
+                    toCsvValue(se.Ky),
+                    toCsvValue(se.rigidKy ? 1 : 0),
+                    toCsvValue(se.shearWallId),
+                    toCsvValue(se.shearWallRole),
+                    toCsvValue(se.braceWallId),
+                    toCsvValue(se.braceWallRole)
+                ].join(','));
+                csvSections.push('#SPRINGELEMENTS\n' + header + '\n' + rows.join('\n'));
+            }
+
+            // 耐力壁（壁エレメント置換）: 3D側UIは現状非表示だが、将来互換のため保存枠を確保
+            if (state.shearWalls && state.shearWalls.length > 0) {
+                const header = 'shearWallId,enabled,lb,lt,rb,rt,kShear,kBend';
+                const rows = state.shearWalls.map(sw => [
+                    toCsvValue(sw.shearWallId || sw.id || ''),
+                    toCsvValue((sw.enabled === true || sw.enabled === '1' || sw.enabled === 'true') ? 1 : 0),
+                    toCsvValue(sw.lb),
+                    toCsvValue(sw.lt),
+                    toCsvValue(sw.rb),
+                    toCsvValue(sw.rt),
+                    toCsvValue(sw.kShear),
+                    toCsvValue(sw.kBend)
+                ].join(','));
+                csvSections.push('#SHEARWALLS\n' + header + '\n' + rows.join('\n'));
+            }
+
+            // 耐力壁（ブレース置換）
+            if (state.braceWalls && state.braceWalls.length > 0) {
+                const header = 'braceWallId,enabled,lb,lt,rb,rt,perMeter,kShear,qAllowShort,kind,sideColumnsEnabled,wallPresetId,wallPresetName,offsetBottomMm,offsetTopMm,jointPresetLb,jointPresetLt,jointPresetRb,jointPresetRt,cornerKxTLb,cornerKxCLb,cornerRigidLb,cornerKxTLt,cornerKxCLt,cornerRigidLt,cornerKxTRb,cornerKxCRb,cornerRigidRb,cornerKxTRt,cornerKxCRt,cornerRigidRt,cornerAllowTLb,cornerAllowCLb,cornerAllowTLt,cornerAllowCLt,cornerAllowTRb,cornerAllowCRb,cornerAllowTRt,cornerAllowCRt';
+                const rows = state.braceWalls.map(bw => [
+                    toCsvValue(bw.braceWallId || bw.id || ''),
+                    toCsvValue((bw.enabled === true || bw.enabled === '1' || bw.enabled === 'true') ? 1 : 0),
+                    toCsvValue(bw.lb),
+                    toCsvValue(bw.lt),
+                    toCsvValue(bw.rb),
+                    toCsvValue(bw.rt),
+                    toCsvValue((bw.perMeter === true || bw.perMeter === '1' || bw.perMeter === 'true') ? 1 : 0),
+                    toCsvValue(bw.kShear),
+                    toCsvValue(bw.qAllowShort),
+                    toCsvValue(bw.kind),
+                    toCsvValue((bw.sideColumnsEnabled === true || bw.sideColumnsEnabled === '1' || bw.sideColumnsEnabled === 'true') ? 1 : 0),
+                    toCsvValue(bw.wallPresetId),
+                    toCsvValue(bw.wallPresetName),
+                    toCsvValue(bw.offsetBottomMm),
+                    toCsvValue(bw.offsetTopMm),
+                    toCsvValue(bw.jointPresetLb),
+                    toCsvValue(bw.jointPresetLt),
+                    toCsvValue(bw.jointPresetRb),
+                    toCsvValue(bw.jointPresetRt),
+                    toCsvValue(bw.cornerKxTLb),
+                    toCsvValue(bw.cornerKxCLb),
+                    toCsvValue(bw.cornerRigidLb),
+                    toCsvValue(bw.cornerKxTLt),
+                    toCsvValue(bw.cornerKxCLt),
+                    toCsvValue(bw.cornerRigidLt),
+                    toCsvValue(bw.cornerKxTRb),
+                    toCsvValue(bw.cornerKxCRb),
+                    toCsvValue(bw.cornerRigidRb),
+                    toCsvValue(bw.cornerKxTRt),
+                    toCsvValue(bw.cornerKxCRt),
+                    toCsvValue(bw.cornerRigidRt),
+                    toCsvValue(bw.cornerAllowTLb),
+                    toCsvValue(bw.cornerAllowCLb),
+                    toCsvValue(bw.cornerAllowTLt),
+                    toCsvValue(bw.cornerAllowCLt),
+                    toCsvValue(bw.cornerAllowTRb),
+                    toCsvValue(bw.cornerAllowCRb),
+                    toCsvValue(bw.cornerAllowTRt),
+                    toCsvValue(bw.cornerAllowCRt)
+                ].join(','));
+                csvSections.push('#BRACEWALLS\n' + header + '\n' + rows.join('\n'));
             }
             if (state.nodeLoads.length > 0) {
                 const header = 'node,px,py,pz';
@@ -18269,7 +20888,7 @@ const loadPreset = (index) => {
     };
 
     const parseCsvTextToState = (text) => {
-        const state = { meta: {}, nodes: [], members: [], nodeLoads: [], memberLoads: [] };
+        const state = { meta: {}, nodes: [], members: [], springElements: [], nodeLoads: [], memberLoads: [], shearWalls: [], braceWalls: [] };
         const sections = text.split(/#\w+\s*/).filter(s => s.trim() !== '');
         const headers = text.match(/#\w+/g) || [];
         if (headers.length === 0 || sections.length === 0) throw new Error('有効なセクション（#NODESなど）が見つかりませんでした。');
@@ -18294,6 +20913,12 @@ const loadPreset = (index) => {
                     state.nodes.push(obj);
                 } else if (header === '#MEMBERS') {
                     state.members.push(obj);
+                } else if (header === '#SPRINGELEMENTS') {
+                    state.springElements.push(obj);
+                } else if (header === '#SHEARWALLS') {
+                    state.shearWalls.push(obj);
+                } else if (header === '#BRACEWALLS') {
+                    state.braceWalls.push(obj);
                 } else if (header === '#NODELOADS') {
                     state.nodeLoads.push(obj);
                 } else if (header === '#MEMBERLOADS') {
@@ -18480,6 +21105,16 @@ const loadPreset = (index) => {
         if (window.isLoadingPreset) {
             return;
         }
+
+        // 耐力壁（ブレース置換）を解析前に反映
+        try {
+            if (window.__shearWalls && typeof window.__shearWalls.applyBraceWallsToModel === 'function') {
+                window.__shearWalls.applyBraceWallsToModel({ silent: true });
+            }
+        } catch (e) {
+            console.warn('runFullAnalysis: applyBraceWallsToModel failed', e);
+        }
+
         calculate();
         runSectionCheck();
     };
@@ -18707,15 +21342,23 @@ const loadPreset = (index) => {
     // 荷重表示制御チェックボックスのイベントリスナー
     const showExternalLoadsCheckbox = document.getElementById('show-external-loads');
     const showSelfWeightCheckbox = document.getElementById('show-self-weight');
+    const showMemberDimensionsCheckbox = document.getElementById('show-member-dimensions');
     const showSpringStiffnessCheckbox = document.getElementById('show-spring-stiffness');
+    const showBraceNamesCheckbox = document.getElementById('show-brace-names');
     if (showExternalLoadsCheckbox) {
         showExternalLoadsCheckbox.addEventListener('change', drawOnCanvas);
     }
     if (showSelfWeightCheckbox) {
         showSelfWeightCheckbox.addEventListener('change', drawOnCanvas);
     }
+    if (showMemberDimensionsCheckbox) {
+        showMemberDimensionsCheckbox.addEventListener('change', drawOnCanvas);
+    }
     if (showSpringStiffnessCheckbox) {
         showSpringStiffnessCheckbox.addEventListener('change', drawOnCanvas);
+    }
+    if (showBraceNamesCheckbox) {
+        showBraceNamesCheckbox.addEventListener('change', drawOnCanvas);
     }
     
     elements.saveBtn.addEventListener('click', saveInputData);

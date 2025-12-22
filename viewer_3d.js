@@ -76,9 +76,9 @@ function viewerCreateAxisDirection(axis) {
         case 'x':
             return new THREE.Vector3(1, 0, 0);
         case 'y':
-            return new THREE.Vector3(0, 0, 1);
-        case 'z':
             return new THREE.Vector3(0, 1, 0);
+        case 'z':
+            return new THREE.Vector3(0, 0, 1);
         default:
             return null;
     }
@@ -109,12 +109,14 @@ function addViewerRollerSupportIndicator(group, position, axis) {
             offset.set(0.45, 0, 0);
             break;
         case 'y':
-            plateGeometry = new THREE.BoxGeometry(plateSpan, plateSpan, plateThickness);
-            offset.set(0, 0, 0.45);
-            break;
-        case 'z':
+            // Y軸固定: 板をY方向に薄く
             plateGeometry = new THREE.BoxGeometry(plateSpan, plateThickness, plateSpan);
             offset.set(0, 0.45, 0);
+            break;
+        case 'z':
+            // Z軸固定: 板をZ方向に薄く
+            plateGeometry = new THREE.BoxGeometry(plateSpan, plateSpan, plateThickness);
+            offset.set(0, 0, 0.45);
             break;
         default:
             return;
@@ -193,7 +195,9 @@ function init() {
 
     const aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
     camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
-    camera.position.set(0, 5, 20);
+    // 2D構造解析の3Dビューアは、基本画面(2Dモデル図)と同じ構図になるよう、+Z側からXY平面を正面視する
+    // Three.js座標系: (X=右, Y=上, Z=手前/奥)
+    camera.position.set(0.05, 0.05, 20);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
@@ -235,6 +239,8 @@ function init() {
 
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
+    controls.target.set(0, 0, 0);
+    controls.update();
 
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
     scene.add(ambientLight);
@@ -481,8 +487,8 @@ function initAxisHelper() {
 
     const axes = [
         { label: 'X', color: 0xff3b30, dir: new THREE.Vector3(1, 0, 0) },
-        { label: 'Y', color: 0x34c759, dir: new THREE.Vector3(0, 0, 1) },
-        { label: 'Z', color: 0x007aff, dir: new THREE.Vector3(0, 1, 0) }
+        { label: 'Y', color: 0x34c759, dir: new THREE.Vector3(0, 1, 0) },
+        { label: 'Z', color: 0x007aff, dir: new THREE.Vector3(0, 0, 1) }
     ];
 
     axes.forEach(({ label, color, dir }) => {
@@ -657,10 +663,10 @@ function build3DModel(scene, nodes, members, loadData = {}) {
 
     nodes.forEach((node, i) => {
         const nodeMesh = new THREE.Mesh(nodeGeometry, nodeMaterial);
-        const nodeY = node.y !== undefined ? node.y : 0;  // 入力Y座標(水平)
-        const nodeZ = node.z !== undefined ? node.z : 0;  // 入力Z座標(鉛直)
-        const nodePosition = new THREE.Vector3(node.x, nodeZ, nodeY);
-        nodeMesh.position.copy(nodePosition);  // Three.js: (X水平, Y鉛直上向き, Z水平)
+        const nodeY = node.y !== undefined ? node.y : 0;
+        const nodeZ = node.z !== undefined ? node.z : 0;
+        const nodePosition = new THREE.Vector3(node.x, nodeY, nodeZ);
+        nodeMesh.position.copy(nodePosition);
         memberGroup.add(nodeMesh);
         nodePositions[i] = nodePosition.clone();
 
@@ -706,9 +712,9 @@ function build3DModel(scene, nodes, members, loadData = {}) {
                 const p1 = nodes[member.i];
                 const p2 = nodes[member.j];
                 const centerX = (p1.x + p2.x) / 2;
-                const y1 = p1.y !== undefined ? p1.y : 0;  // 入力Y座標(実際はZ方向)
+                const y1 = p1.y !== undefined ? p1.y : 0;
                 const y2 = p2.y !== undefined ? p2.y : 0;
-                const z1 = p1.z !== undefined ? p1.z : 0;  // 入力Z座標(実際はY方向)
+                const z1 = p1.z !== undefined ? p1.z : 0;
                 const z2 = p2.z !== undefined ? p2.z : 0;
                 const centerY = (y1 + y2) / 2;
                 const centerZ = (z1 + z2) / 2;
@@ -718,7 +724,7 @@ function build3DModel(scene, nodes, members, loadData = {}) {
                 memberDiv.className = 'label';
                 memberDiv.textContent = `M${index + 1}`;
                 const memberLabel = new THREE.CSS2DObject(memberDiv);
-                memberLabel.position.set(centerX, centerZ, centerY);
+                memberLabel.position.set(centerX, centerY, centerZ);
                 memberLabelsGroup.add(memberLabel);
 
                 // 断面名称ラベル（部材ラベルの少し下に配置）
@@ -728,7 +734,7 @@ function build3DModel(scene, nodes, members, loadData = {}) {
                     sectionDiv.className = 'label-section';
                     sectionDiv.textContent = sectionName;
                     const sectionLabel = new THREE.CSS2DObject(sectionDiv);
-                    sectionLabel.position.set(centerX, centerZ - 0.3, centerY);
+                    sectionLabel.position.set(centerX, centerY - 0.3, centerZ);
                     sectionLabelsGroup.add(sectionLabel);
                 }
             }
@@ -779,10 +785,10 @@ function build3DModel(scene, nodes, members, loadData = {}) {
             };
 
             addComponent('wx', wx, new THREE.Vector3(1, 0, 0));
-            addComponent('wy', wy, new THREE.Vector3(0, 0, 1));
-            addComponent('wz', wz, new THREE.Vector3(0, -1, 0));
+            addComponent('wy', wy, new THREE.Vector3(0, 1, 0));
+            addComponent('wz', wz, new THREE.Vector3(0, 0, 1));
             if (!wz) {
-                addComponent('legacyW', legacyW, new THREE.Vector3(0, -1, 0));
+                addComponent('legacyW', legacyW, new THREE.Vector3(0, 1, 0));
             }
 
             if (components.length === 0) return;
@@ -846,12 +852,12 @@ function build3DModel(scene, nodes, members, loadData = {}) {
             const color = COLORS.externalConcentrated;
 
             addForceArrow(loadGroup, position, new THREE.Vector3(1, 0, 0), load.px || 0, color, 'Px=', 'kN');
-            addForceArrow(loadGroup, position, new THREE.Vector3(0, 0, 1), load.py || 0, color, 'Py=', 'kN');
-            addForceArrow(loadGroup, position, new THREE.Vector3(0, 1, 0), load.pz || 0, color, 'Pz=', 'kN');
+            addForceArrow(loadGroup, position, new THREE.Vector3(0, 1, 0), load.py || 0, color, 'Py=', 'kN');
+            addForceArrow(loadGroup, position, new THREE.Vector3(0, 0, 1), load.pz || 0, color, 'Pz=', 'kN');
 
             addMomentIndicator(loadGroup, position, new THREE.Vector3(1, 0, 0), load.mx || 0, color, 'Mx=');
-            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 0, 1), load.my || 0, color, 'My=');
-            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 1, 0), load.mz || 0, color, 'Mz=');
+            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 1, 0), load.my || 0, color, 'My=');
+            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 0, 1), load.mz || 0, color, 'Mz=');
         });
     }
 
@@ -875,14 +881,17 @@ function build3DModel(scene, nodes, members, loadData = {}) {
     const maxDim = Math.max(size.x, size.y, size.z);
 
     if (!isFinite(maxDim) || maxDim === 0) {
-        camera.position.set(0, 0, 50);
+        // 初期表示は基本画面(2Dモデル図)と同じ構図: +Z側から正面視
+        camera.position.set(0.05, 0.05, 50);
         controls.target.set(0, 0, 0);
     } else {
         const fov = camera.fov * (Math.PI / 180);
         let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
         cameraZ *= 1.5;
 
-        camera.position.set(center.x, center.y, center.z + cameraZ);
+        // 基本画面(2Dモデル図)と同じ構図: +Z側からモデル中心を正面視
+        const epsilon = Math.max(1e-6, cameraZ * 0.001);
+        camera.position.set(center.x + epsilon, center.y + epsilon, center.z + cameraZ);
         controls.target.copy(center);
     }
     controls.update();
@@ -894,13 +903,13 @@ function createMemberMesh(member, nodes) {
 
     if (!nodeI || !nodeJ) return null;
 
-    // 3D対応: 入力(X,Y,Z) → Three.js(X,Z,Y)でZ=鉛直
+    // 入力座標は Three.js と同一の (X,Y,Z) として扱う
     const y1 = nodeI.y !== undefined ? nodeI.y : 0;
     const y2 = nodeJ.y !== undefined ? nodeJ.y : 0;
     const z1 = nodeI.z !== undefined ? nodeI.z : 0;
     const z2 = nodeJ.z !== undefined ? nodeJ.z : 0;
-    const p1 = new THREE.Vector3(nodeI.x, z1, y1);  // Three.js: (X水平, Y鉛直, Z水平)
-    const p2 = new THREE.Vector3(nodeJ.x, z2, y2);
+    const p1 = new THREE.Vector3(nodeI.x, y1, z1);
+    const p2 = new THREE.Vector3(nodeJ.x, y2, z2);
     const memberLength = p1.distanceTo(p2);
     if (memberLength <= 0) return null;
 
@@ -956,7 +965,6 @@ function createMemberMesh(member, nodes) {
     mesh.add(edges);
 
     const direction = new THREE.Vector3().subVectors(p2, p1).normalize();
-    const isVertical = Math.abs(direction.y) > 0.95;
 
     const resolveAxisKey = () => {
         const rawKey = (member.sectionAxis && member.sectionAxis.key)
@@ -971,25 +979,38 @@ function createMemberMesh(member, nodes) {
         const normalizedMode = typeof rawMode === 'string' ? rawMode.trim().toLowerCase() : '';
 
         if (normalizedKey === 'both' || normalizedMode === 'both') return 'both';
-        if (normalizedKey === 'y' || normalizedMode === 'weak') return 'y';
+        // 断面形状は既定で「強軸=x」になるように作られている前提。
+        // axisKey が 'y' のときだけ 90°回転して x/y を入れ替える。
         if (normalizedKey === 'x' || normalizedMode === 'strong') return 'x';
-        if (normalizedKey === 'weak') return 'y';
+        if (normalizedKey === 'y' || normalizedMode === 'weak') return 'y';
         if (normalizedKey === 'strong') return 'x';
+        if (normalizedKey === 'weak') return 'y';
         return 'x';
     };
 
-    const axisKey = resolveAxisKey();
+    let axisKey = resolveAxisKey();
+
+    // 2D構造解析の3Dビューアでは、モデルが基本的にXY平面上にある。
+    // lookAt/up の姿勢決定により断面のロールが90°ずれて見え、強軸/弱軸が反転して表示されることがあるため、
+    // XY平面上の部材は一律で x/y を入れ替えて補正する。
+    if (axisKey === 'x' || axisKey === 'y') {
+        const tol = 1e-6;
+        const isInXYPlane = Math.abs(direction.z) < tol;
+        if (isInXYPlane) {
+            axisKey = axisKey === 'x' ? 'y' : 'x';
+        }
+    }
 
     mesh.position.copy(p1);
-    mesh.up.set(isVertical ? 1 : 0, isVertical ? 0 : 1, 0);
+    // 2D構造解析のモデルは基本的にXY平面上にあるため、Zをupにすると姿勢が安定する。
+    // ただし部材方向がupとほぼ平行な場合は特異点になるので、別のupに逃がす。
+    const preferredUp = new THREE.Vector3(0, 0, 1);
+    const fallbackUp = new THREE.Vector3(1, 0, 0);
+    const up = Math.abs(direction.dot(preferredUp)) > 0.95 ? fallbackUp : preferredUp;
+    mesh.up.copy(up);
     mesh.lookAt(p2);
 
-    if (isVertical) {
-        mesh.rotateZ(Math.PI / 2);
-        if (axisKey === 'y') {
-            mesh.rotateZ(Math.PI / 2);
-        }
-    } else if (axisKey === 'y') {
+    if (axisKey === 'y') {
         mesh.rotateZ(Math.PI / 2);
     }
 

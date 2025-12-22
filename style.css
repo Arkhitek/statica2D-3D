@@ -550,6 +550,149 @@ thead {
     z-index: 10;
 }
 
+/* --- 2D: 断面情報(低減係数)のセル内レイアウト --- */
+.auto-label {
+    font-size: 10px;
+    color: #999;
+    display: block;
+    text-align: right;
+    margin-top: 2px;
+    line-height: 1;
+}
+
+.reduced-label {
+    font-size: 10px;
+    color: #555;
+    display: block;
+    text-align: right;
+    margin-top: 2px;
+    line-height: 1;
+}
+
+.cell-input-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    width: 100%;
+    min-width: 0;
+}
+
+/* 「低減係数：」ラベル + 入力が横にはみ出さないようにする */
+.reduction-wrapper > div {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+}
+
+.reduction-wrapper > div > span {
+    white-space: nowrap;
+    font-size: 10px;
+    color: var(--color-text-secondary);
+}
+
+.reduction-factor-input {
+    width: 72px;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* --- 部材(物性値・接合条件)テーブル: 列を潰さず横スクロール + 先頭列固定 --- */
+#members-table {
+    table-layout: auto;
+    width: max-content;
+    min-width: 100%;
+}
+
+#members-table th,
+#members-table td {
+    white-space: nowrap;
+    word-wrap: normal;
+}
+
+/* 見出しは折り返し可（列幅を過度に広げない） */
+#members-table th {
+    white-space: normal;
+}
+
+/* 先頭～節点列はコンパクトに */
+#members-table th:nth-child(1),
+#members-table td:nth-child(1) {
+    width: 64px;
+}
+
+#members-table th:nth-child(2),
+#members-table td:nth-child(2),
+#members-table th:nth-child(3),
+#members-table td:nth-child(3) {
+    width: 72px;
+}
+
+#members-table td:nth-child(2) input,
+#members-table td:nth-child(3) input {
+    width: 60px;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* 材料/断面/座屈グループ列を適度に絞る */
+#members-table th.col-material,
+#members-table td.col-material {
+    width: 150px;
+}
+
+#members-table th.col-section,
+#members-table td.col-section {
+    width: 180px;
+}
+
+#members-table th.col-buckling,
+#members-table td.col-buckling {
+    width: 160px;
+}
+
+/* セル内コントロールが列幅内に収まるようにする */
+#members-table select,
+#members-table input {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* 長い選択肢が列幅を押し広げないよう省略表示 */
+#members-table select {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* F入力の縦レイアウト（JS側で付与するが、念のためCSSでも担保） */
+.strength-input-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    min-width: 0;
+}
+
+#members-table th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 30;
+    background-color: #f0f8ff;
+    border-right: 2px solid var(--color-border);
+}
+
+#members-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background-color: var(--color-surface);
+    border-right: 2px solid var(--color-border);
+}
+
 /* --- 鋼材規格表の行スタイル --- */
 .full-table tbody tr {
     cursor: pointer;
@@ -896,6 +1039,18 @@ canvas {
 }
 .popup-box.add-member-popup-wide {
     width: 380px;
+}
+.popup-box.shear-wall-props-popup-wide,
+.popup-box.brace-wall-props-popup-wide {
+    width: 920px;
+    min-width: 680px;
+    max-width: calc(100vw - 40px);
+}
+.popup-box.shear-wall-props-popup-wide input[type="number"],
+.popup-box.brace-wall-props-popup-wide input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 120px;
 }
 .section-info-display {
     background-color: #e8f5e9;
@@ -1753,6 +1908,9 @@ body.model-fullscreen-active #model-workspace-root {
     min-height: 0;
     display: flex;
     flex-direction: column;
+    width: 100%;
+    max-width: none;
+    margin: 0;
 }
 
 body.model-fullscreen-active #model-workspace-root .model-controls,
@@ -1762,6 +1920,7 @@ body.model-fullscreen-active #model-workspace-root .canvas-controls .help-icon {
 }
 
 body.model-fullscreen-active #model-workspace-root #fit-view-model,
+body.model-fullscreen-active #model-workspace-root #fullscreen-model-btn,
 body.model-fullscreen-active #model-workspace-root #zoom-in-btn,
 body.model-fullscreen-active #model-workspace-root #zoom-out-btn,
 body.model-fullscreen-active #model-workspace-root #grid-toggle,
@@ -1771,13 +1930,30 @@ body.model-fullscreen-active #model-workspace-root label[for="member-info-toggle
     display: none;
 }
 
+/* 全画面時のみ不要UIを隠す（通常表示は維持） */
+body.model-fullscreen-active #model-workspace-root #calculate-and-animate-btn,
+body.model-fullscreen-active #model-workspace-root #calculate-btn,
+body.model-fullscreen-active #model-workspace-root .file-controls,
+body.model-fullscreen-active #model-workspace-root #save-btn,
+body.model-fullscreen-active #model-workspace-root #load-btn,
+body.model-fullscreen-active #model-workspace-root #create-share-link-btn,
+body.model-fullscreen-active #model-workspace-root #ai-generator-section,
+body.model-fullscreen-active #model-workspace-root #ai-features-toggle,
+body.model-fullscreen-active #model-workspace-root #ai-features-toggle-row,
+body.model-fullscreen-active #model-workspace-root label[for="preset-selector"],
+body.model-fullscreen-active #model-workspace-root #preset-selector {
+    display: none !important;
+}
+
 body.model-fullscreen-active #model-canvas-container {
     flex: 1;
     min-height: 0;
+    width: 100%;
 }
 
 body.model-fullscreen-active #model-canvas-container canvas {
     height: 100% !important;
+    width: 100% !important;
 }
 
 .model-fs-btn {

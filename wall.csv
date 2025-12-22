@@ -1,0 +1,7 @@
+# wall.csv サンプル
+# 必須列: id,name,k_theta_kN_per_rad_per_m
+# 任意列: q_allow_short_kN_per_m (短期許容せん断耐力のプリセット値。単位壁幅1m当たり)
+id,name,k_theta_kN_per_rad_per_m,q_allow_short_kN_per_m
+W001,壁A(例),1500,50
+W002,壁B(例),2500,80
+W003,壁C(例),4000,120

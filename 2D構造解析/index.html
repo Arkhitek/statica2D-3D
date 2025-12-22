@@ -240,6 +240,10 @@
                             <input type="checkbox" id="show-spring-stiffness" checked style="margin-right: 5px;">
                             バネ剛性表示
                         </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" id="show-brace-names" checked style="margin-right: 5px;">
+                            ブレース名表示
+                        </label>
                     </div>
                 </div>
 
@@ -264,7 +268,7 @@
                         <input type="range" id="font-scale-model" min="0.5" max="3.0" step="0.1" value="1.0" style="width: 80px; vertical-align: middle;">
                         <span id="font-scale-value-model" style="font-size: 12px; width: 40px; display: inline-block; text-align: left;">1.0x</span>
                         <button id="fit-view-model" title="全体表示" style="margin-left:6px;">⛶ 全体</button>
-                        <button id="fullscreen-model-btn" title="モデル図を全画面表示 (Escで終了)" style="margin-left:6px;">全画面</button>
+                        <button id="fullscreen-model-btn" title="モデル図を全画面表示 (Escで終了)" style="margin-left:6px;">⤢</button>
 
                         <input type="checkbox" id="grid-toggle" checked>
                         <label for="grid-toggle" title="グリッド表示切替 (ショートカット: G)">グリッド表示</label>
@@ -277,7 +281,7 @@
                     </div>
                 </div>
                 
-                <div style="margin: 20px 0; padding: 10px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
+                <div id="ai-features-toggle-row" style="margin: 20px 0; padding: 10px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
                     <label style="display: flex; align-items: center; cursor: pointer; font-weight: bold;">
                         <input type="checkbox" id="ai-features-toggle" style="margin-right: 8px;">
                         🤖 AIによるモデル生成機能を表示
@@ -449,12 +453,47 @@
                             </thead>
                             <tbody></tbody>
                         </table>
-                        <button id="add-member-btn">部材を追加</button>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                            <button id="add-member-btn">部材を追加</button>
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <h3>バネ要素（節点間）</h3>
+                        <p style="font-size: 12px; color: #666; margin-top: -6px;">※ バネ要素は断面情報・接合条件を持たず、剛性（軸Kx引張/圧縮、せん断Ky）のみを入力します。</p>
+                        <table id="spring-elements-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:6%">#</th>
+                                    <th style="width:10%">始点#i</th>
+                                    <th style="width:10%">終点#j</th>
+                                    <th style="width:24%">Kx(引張) (kN/mm)・剛</th>
+                                    <th style="width:24%">Kx(圧縮) (kN/mm)・剛</th>
+                                    <th style="width:24%">Ky (kN/mm)・剛</th>
+                                    <th style="width:12%">削除</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                            <button id="add-spring-element-row-btn">バネ要素を追加</button>
+                        </div>
                     </div>
                 </div>
 
                 <h2>4. 耐力壁の設定</h2>
-                <div class="table-container">
+                <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:8px 0 10px;">
+                    <label style="display:flex; gap:8px; align-items:center; margin:0;">
+                        <span style="white-space:nowrap;">wall.csv 読込</span>
+                        <input id="wall-csv-file" type="file" accept=".csv" />
+                    </label>
+                    <label style="display:flex; gap:8px; align-items:center; margin:0;">
+                        <span style="white-space:nowrap;">joint.csv 読込</span>
+                        <input id="joint-csv-file" type="file" accept=".csv" />
+                    </label>
+                    <div style="font-size:12px; color:#666;">読み込み後、各行のプルダウンから選択できます</div>
+                </div>
+                <div class="table-container" id="shear-wall-wall-element-ui" style="display:none;">
                     <h3>耐力壁（壁エレメント置換）</h3>
                     <table id="shear-walls-table">
                         <thead>
@@ -465,23 +504,38 @@
                                 <th style="width:7%">左上#</th>
                                 <th style="width:7%">右下#</th>
                                 <th style="width:7%">右上#</th>
-                                <th style="width:8%">上オフセット (mm)</th>
-                                <th style="width:8%">下オフセット (mm)</th>
-                                <th style="width:10%">置換柱 せん断剛性 (kN/m)</th>
-                                <th style="width:10%">置換柱 曲げ剛性 EI (kN・m²)</th>
-                                <th style="width:10%">側柱断面</th>
-                                <th style="width:8%">Kx 左下 (kN/m)</th>
-                                <th style="width:8%">Kx 左上 (kN/m)</th>
-                                <th style="width:8%">Kx 右下 (kN/m)</th>
-                                <th style="width:8%">Kx 右上 (kN/m)</th>
+                                <th style="width:12%">置換柱 せん断剛性</th>
+                                <th style="width:12%">置換柱 曲げ剛性 EI (N・mm²)</th>
                                 <th style="width:6%">削除</th>
                             </tr>
                         </thead>
                         <tbody></tbody>
                     </table>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-                        <button id="add-shear-wall-btn">耐力壁を追加</button>
-                    </div>
+                </div>
+
+                <div class="table-container" style="margin-top:14px;">
+                    <h3>耐力壁（ブレース置換）</h3>
+                    <table id="brace-walls-table">
+                        <thead>
+                            <tr>
+                                <th style="width:5%">#</th>
+                                <th style="width:6%">有効</th>
+                                <th style="width:7%">左下#</th>
+                                <th style="width:7%">左上#</th>
+                                <th style="width:7%">右下#</th>
+                                <th style="width:7%">右上#</th>
+                                <th style="width:12%">せん断剛性</th>
+                                <th style="width:16%">置換種別</th>
+                                <th style="width:26%">側柱/接合</th>
+                                <th style="width:6%">削除</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                    <button id="add-shear-wall-btn">耐力壁を追加</button>
                 </div>
 
                 <button id="calculate-btn" title="構造解析を実行 (ショートカット: C)">計算実行</button>
@@ -628,7 +682,7 @@
 
         <footer class="app-footer">
             <a href="https://arkhitek.co.jp/" target="_blank" class="company-logo-footer" title="Arkhitek 公式サイト">
-                <img src="arkhitek-logo.png" alt="Arkhitek Logo">
+                <img src="../arkhitek-logo.png" alt="Arkhitek Logo">
             </a>
         </footer>
     </div>
@@ -683,17 +737,25 @@
                         <div class="spring-input">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
                                 <label for="popup-i-spring-kx" style="margin-bottom: 0;">Kx (kN/mm)</label>
-                                <label style="margin-bottom: 0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
-                                    <input id="popup-i-spring-rigid-kx" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-i-spring-kx').disabled = this.checked; document.getElementById('popup-i-spring-kx-c').disabled = this.checked;">剛
-                                </label>
+                                <span style="margin-bottom: 0; font-size: 12px; color:#666;">（剛は下で個別設定）</span>
                             </div>
                             <div style="display:flex; gap:6px;">
                                 <div style="flex:1; display:flex; flex-direction:column;">
-                                    <label for="popup-i-spring-kx" style="font-size: 12px; margin: 0 0 2px;">引張</label>
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+                                        <label for="popup-i-spring-kx" style="font-size: 12px; margin: 0;">引張</label>
+                                        <label style="margin:0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                            <input id="popup-i-spring-rigid-kx-t" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-i-spring-kx').disabled = this.checked;">剛
+                                        </label>
+                                    </div>
                                     <input id="popup-i-spring-kx" type="number" min="0" step="0.01" value="0">
                                 </div>
                                 <div style="flex:1; display:flex; flex-direction:column;">
-                                    <label for="popup-i-spring-kx-c" style="font-size: 12px; margin: 0 0 2px;">圧縮</label>
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+                                        <label for="popup-i-spring-kx-c" style="font-size: 12px; margin: 0;">圧縮</label>
+                                        <label style="margin:0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                            <input id="popup-i-spring-rigid-kx-c" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-i-spring-kx-c').disabled = this.checked;">剛
+                                        </label>
+                                    </div>
                                     <input id="popup-i-spring-kx-c" type="number" min="0" step="0.01" value="0">
                                 </div>
                             </div>
@@ -732,17 +794,25 @@
                         <div class="spring-input">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
                                 <label for="popup-j-spring-kx" style="margin-bottom: 0;">Kx (kN/mm)</label>
-                                <label style="margin-bottom: 0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
-                                    <input id="popup-j-spring-rigid-kx" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-j-spring-kx').disabled = this.checked; document.getElementById('popup-j-spring-kx-c').disabled = this.checked;">剛
-                                </label>
+                                <span style="margin-bottom: 0; font-size: 12px; color:#666;">（剛は下で個別設定）</span>
                             </div>
                             <div style="display:flex; gap:6px;">
                                 <div style="flex:1; display:flex; flex-direction:column;">
-                                    <label for="popup-j-spring-kx" style="font-size: 12px; margin: 0 0 2px;">引張</label>
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+                                        <label for="popup-j-spring-kx" style="font-size: 12px; margin: 0;">引張</label>
+                                        <label style="margin:0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                            <input id="popup-j-spring-rigid-kx-t" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-j-spring-kx').disabled = this.checked;">剛
+                                        </label>
+                                    </div>
                                     <input id="popup-j-spring-kx" type="number" min="0" step="0.01" value="0">
                                 </div>
                                 <div style="flex:1; display:flex; flex-direction:column;">
-                                    <label for="popup-j-spring-kx-c" style="font-size: 12px; margin: 0 0 2px;">圧縮</label>
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+                                        <label for="popup-j-spring-kx-c" style="font-size: 12px; margin: 0;">圧縮</label>
+                                        <label style="margin:0; font-size: 12px; display: flex; align-items: center; cursor: pointer;">
+                                            <input id="popup-j-spring-rigid-kx-c" type="checkbox" style="width: auto; margin-right: 4px;" onchange="document.getElementById('popup-j-spring-kx-c').disabled = this.checked;">剛
+                                        </label>
+                                    </div>
                                     <input id="popup-j-spring-kx-c" type="number" min="0" step="0.01" value="0">
                                 </div>
                             </div>
@@ -799,69 +869,181 @@
                 <input id="sw-props-rt" type="number" min="1" step="1" placeholder="右上">
             </div>
 
-            <label>上/下オフセット (mm)</label>
-            <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:6px;">
-                <input id="sw-props-off-upper" type="number" min="0" step="1" value="50" placeholder="上">
-                <input id="sw-props-off-lower" type="number" min="0" step="1" value="50" placeholder="下">
-            </div>
+            <label for="sw-props-per-meter">単位壁幅(1m)当たりの剛性で入力</label>
+            <input id="sw-props-per-meter" type="checkbox">
 
-            <label>置換柱 せん断剛性 (kN/m)</label>
+            <label>置換柱 せん断剛性 (<span id="sw-props-k-unit">kN/mm</span>)</label>
             <div style="display:flex; gap:10px; align-items:center;">
-                <input id="sw-props-k-shear" type="number" min="0" step="1" style="width:100%; min-width:0;">
+                <input id="sw-props-k-shear" type="number" min="0" step="0.001" style="width:100%; min-width:0;">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-k-shear-rigid" type="checkbox">剛</label>
             </div>
 
-            <label>置換柱 曲げ剛性 EI (kN・m^2)</label>
+            <label>置換柱 曲げ剛性 EI (<span id="sw-props-ei-unit">N・mm^2</span>)</label>
             <div style="display:flex; gap:10px; align-items:center;">
                 <input id="sw-props-ei" type="number" min="0" step="1" style="width:100%; min-width:0;">
                 <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-ei-rigid" type="checkbox">剛</label>
-            </div>
-
-            <div style="grid-column: 1 / -1; font-weight:bold; margin-top:6px;">接合部バネ Kx (kN/m)</div>
-
-            <label>左下</label>
-            <div style="display:grid; grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
-                <div style="font-size:12px; white-space:nowrap;">引張</div>
-                <input id="sw-props-kx-lb-t" type="number" min="0" step="1" placeholder="引張">
-                <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-lb-t-rigid" type="checkbox">剛</label>
-                <div style="font-size:12px; white-space:nowrap;">圧縮</div>
-                <input id="sw-props-kx-lb-c" type="number" min="0" step="1" placeholder="圧縮">
-                <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-lb-c-rigid" type="checkbox">剛</label>
-            </div>
-
-            <label>左上</label>
-            <div style="display:grid; grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
-                <div style="font-size:12px; white-space:nowrap;">引張</div>
-                <input id="sw-props-kx-lt-t" type="number" min="0" step="1" placeholder="引張">
-                <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-lt-t-rigid" type="checkbox">剛</label>
-                <div style="font-size:12px; white-space:nowrap;">圧縮</div>
-                <input id="sw-props-kx-lt-c" type="number" min="0" step="1" placeholder="圧縮">
-                <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-lt-c-rigid" type="checkbox">剛</label>
-            </div>
-
-            <label>右下</label>
-            <div style="display:grid; grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
-                <div style="font-size:12px; white-space:nowrap;">引張</div>
-                <input id="sw-props-kx-rb-t" type="number" min="0" step="1" placeholder="引張">
-                <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-rb-t-rigid" type="checkbox">剛</label>
-                <div style="font-size:12px; white-space:nowrap;">圧縮</div>
-                <input id="sw-props-kx-rb-c" type="number" min="0" step="1" placeholder="圧縮">
-                <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-rb-c-rigid" type="checkbox">剛</label>
-            </div>
-
-            <label>右上</label>
-            <div style="display:grid; grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto; gap:6px; align-items:center;">
-                <div style="font-size:12px; white-space:nowrap;">引張</div>
-                <input id="sw-props-kx-rt-t" type="number" min="0" step="1" placeholder="引張">
-                <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-rt-t-rigid" type="checkbox">剛</label>
-                <div style="font-size:12px; white-space:nowrap;">圧縮</div>
-                <input id="sw-props-kx-rt-c" type="number" min="0" step="1" placeholder="圧縮">
-                <label style="display:flex; gap:6px; align-items:center; white-space:nowrap; margin:0;"><input id="sw-props-kx-rt-c-rigid" type="checkbox">剛</label>
             </div>
         </div>
 
         <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:12px;">
             <button id="sw-props-apply" type="button">適用</button>
+        </div>
+    </div>
+
+    <div id="brace-wall-props-popup" class="popup-box brace-wall-props-popup-wide" style="display:none; visibility:hidden;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+            <div style="font-weight:bold;">ブレース置換プロパティ: <span id="bw-props-id">-</span></div>
+            <button id="bw-props-close" type="button">×</button>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 160px 1fr; gap:8px 10px; align-items:center;">
+            <label for="bw-props-enabled">有効</label>
+            <input id="bw-props-enabled" type="checkbox">
+
+            <label>四隅の節点#</label>
+            <div style="display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:6px;">
+                <input id="bw-props-lb" type="number" min="1" step="1" placeholder="左下">
+                <input id="bw-props-lt" type="number" min="1" step="1" placeholder="左上">
+                <input id="bw-props-rb" type="number" min="1" step="1" placeholder="右下">
+                <input id="bw-props-rt" type="number" min="1" step="1" placeholder="右上">
+            </div>
+
+            <label for="bw-props-kind">種別</label>
+            <select id="bw-props-kind">
+                <option value="tension">引張のみ</option>
+                <option value="both">引張圧縮</option>
+            </select>
+
+            <label for="bw-props-per-meter">単位壁幅(1m)当たりの剛性で入力</label>
+            <input id="bw-props-per-meter" type="checkbox">
+
+            <label>せん断剛性 (<span id="bw-props-k-unit">kN/mm</span>)</label>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <input id="bw-props-k-shear" type="number" min="0" step="0.001" style="width:100%; min-width:0;">
+            </div>
+
+            <label>短期せん断許容耐力 (<span id="bw-props-q-allow-unit">kN</span>)</label>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <input id="bw-props-q-allow-short" type="number" min="0" step="0.01" style="width:100%; min-width:0;">
+            </div>
+
+            <label>wall.csv から選択</label>
+            <div id="bw-props-walllib-box" style="display:none;">
+                <select id="bw-props-wall-preset" class="bracewall-walllib-select" style="width:100%;"></select>
+                <div style="font-size:11px; color:#666; line-height:1.2; margin-top:4px;">※「単位壁幅(1m)当たり」で入力時のみ反映</div>
+            </div>
+
+            <label for="bw-props-sidecolumns-enabled">側柱を使用</label>
+            <input id="bw-props-sidecolumns-enabled" type="checkbox">
+        </div>
+
+        <div id="bw-props-sidecolumns-box" style="display:none; margin-top:10px; border-top:1px solid #ddd; padding-top:10px;">
+            <div style="display:grid; grid-template-columns:160px 1fr; gap:8px 10px; align-items:center;">
+                <div>左柱</div>
+                <div style="display:flex; gap:6px; align-items:center; min-width:0;">
+                    <button id="bw-props-left-section-btn" type="button">断面選択</button>
+                    <span id="bw-props-left-section-label" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">-</span>
+                </div>
+
+                <div>右柱</div>
+                <div style="display:flex; gap:6px; align-items:center; min-width:0;">
+                    <button id="bw-props-right-section-btn" type="button">断面選択</button>
+                    <span id="bw-props-right-section-label" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">-</span>
+                </div>
+
+                <label for="bw-props-offset-bottom-mm">下オフセット</label>
+                <div style="display:flex; gap:4px; align-items:center;">
+                    <input id="bw-props-offset-bottom-mm" type="number" min="0" step="1" style="width:90px;">
+                    <span>mm</span>
+                </div>
+
+                <label for="bw-props-offset-top-mm">上オフセット</label>
+                <div style="display:flex; gap:4px; align-items:center;">
+                    <input id="bw-props-offset-top-mm" type="number" min="0" step="1" style="width:90px;">
+                    <span>mm</span>
+                </div>
+            </div>
+
+            <div style="margin-top:10px; font-size:12px; color:#666; line-height:1.2;">接合(軸方向) 単位: kN/mm（引張/圧縮）</div>
+            <div style="display:grid; grid-template-columns:72px 1fr 1fr 46px 1fr; gap:6px; align-items:center; margin-top:6px;">
+                <div></div><div style="font-size:11px; color:#444;">引張</div><div style="font-size:11px; color:#444;">圧縮</div><div style="font-size:11px; color:#444;">剛</div><div style="font-size:11px; color:#444;">joint.csv</div>
+
+                <div>左下</div>
+                <input id="bw-props-corner-kx-t-lb" type="number" min="0" step="0.001" style="width:100%;">
+                <input id="bw-props-corner-kx-c-lb" type="number" min="0" step="0.001" style="width:100%;">
+                <label style="display:flex; justify-content:center; margin:0;"><input id="bw-props-corner-rigid-lb" type="checkbox"></label>
+                <select id="bw-props-joint-preset-lb" style="width:100%;"></select>
+
+                <div>左上</div>
+                <input id="bw-props-corner-kx-t-lt" type="number" min="0" step="0.001" style="width:100%;">
+                <input id="bw-props-corner-kx-c-lt" type="number" min="0" step="0.001" style="width:100%;">
+                <label style="display:flex; justify-content:center; margin:0;"><input id="bw-props-corner-rigid-lt" type="checkbox"></label>
+                <select id="bw-props-joint-preset-lt" style="width:100%;"></select>
+
+                <div>右下</div>
+                <input id="bw-props-corner-kx-t-rb" type="number" min="0" step="0.001" style="width:100%;">
+                <input id="bw-props-corner-kx-c-rb" type="number" min="0" step="0.001" style="width:100%;">
+                <label style="display:flex; justify-content:center; margin:0;"><input id="bw-props-corner-rigid-rb" type="checkbox"></label>
+                <select id="bw-props-joint-preset-rb" style="width:100%;"></select>
+
+                <div>右上</div>
+                <input id="bw-props-corner-kx-t-rt" type="number" min="0" step="0.001" style="width:100%;">
+                <input id="bw-props-corner-kx-c-rt" type="number" min="0" step="0.001" style="width:100%;">
+                <label style="display:flex; justify-content:center; margin:0;"><input id="bw-props-corner-rigid-rt" type="checkbox"></label>
+                <select id="bw-props-joint-preset-rt" style="width:100%;"></select>
+            </div>
+
+            <div style="margin-top:10px; font-size:12px; color:#666; line-height:1.2;">接合(軸方向) 短期許容耐力 単位: kN（引張/圧縮）</div>
+            <div style="display:grid; grid-template-columns:72px 1fr 1fr; gap:6px; align-items:center; margin-top:6px;">
+                <div></div><div style="font-size:11px; color:#444;">引張</div><div style="font-size:11px; color:#444;">圧縮</div>
+
+                <div>左下</div>
+                <input id="bw-props-corner-allow-t-lb" type="number" min="0" step="0.01" style="width:100%;">
+                <input id="bw-props-corner-allow-c-lb" type="number" min="0" step="0.01" style="width:100%;">
+
+                <div>左上</div>
+                <input id="bw-props-corner-allow-t-lt" type="number" min="0" step="0.01" style="width:100%;">
+                <input id="bw-props-corner-allow-c-lt" type="number" min="0" step="0.01" style="width:100%;">
+
+                <div>右下</div>
+                <input id="bw-props-corner-allow-t-rb" type="number" min="0" step="0.01" style="width:100%;">
+                <input id="bw-props-corner-allow-c-rb" type="number" min="0" step="0.01" style="width:100%;">
+
+                <div>右上</div>
+                <input id="bw-props-corner-allow-t-rt" type="number" min="0" step="0.01" style="width:100%;">
+                <input id="bw-props-corner-allow-c-rt" type="number" min="0" step="0.01" style="width:100%;">
+            </div>
+        </div>
+
+        <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:12px;">
+            <button id="bw-props-apply" type="button">適用</button>
+        </div>
+    </div>
+
+    <!-- 耐力壁追加: 種別選択ポップアップ -->
+    <div id="shear-wall-add-type-popup" class="popup-box" style="display:none; visibility:hidden;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+            <div style="font-weight:bold;">耐力壁を追加</div>
+            <button id="sw-add-type-close" type="button">×</button>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button id="sw-add-type-wall" type="button" style="display:none;">壁エレメント置換</button>
+            <button id="sw-add-type-brace" type="button" style="flex:1; min-width:220px;">ブレース置換</button>
+        </div>
+        <div style="margin-top:10px; color:#666; font-size:12px; line-height:1.4;">
+            選択後、入力表に1行追加されます（四隅節点は表で入力してください）。
+        </div>
+    </div>
+
+    <!-- ブレース置換: 種別選択ポップアップ -->
+    <div id="brace-wall-add-kind-popup" class="popup-box" style="display:none; visibility:hidden;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+            <div style="font-weight:bold;">ブレース置換の種別</div>
+            <button id="bw-add-kind-close" type="button">×</button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+            <button id="bw-add-kind-tension" type="button">引張ブレース置換（引張のみ）</button>
+            <button id="bw-add-kind-both" type="button">圧縮・引張ブレース置換（同一剛性）</button>
         </div>
     </div>
     
